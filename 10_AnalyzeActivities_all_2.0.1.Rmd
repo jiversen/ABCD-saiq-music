@@ -1,9 +1,10 @@
 ---
-title: "ABCD NDA18 2.0 activities questionnaire"
+title: "ABCD NDA 2.0.1 activities questionnaire"
 output: github_document
 ---
 
-Analyze ABCD Activities questionnaire. Call this after running merge_data_music, core_demographics_music and categorical_extension_music
+Analyze ABCD Activities questionnaire from DEAP 2.0.1 Rds file (doi:10.15154/1504431). No longer need to call this after running merge_data_music, core_demographics_music and categorical_extension_music
+However, to simplify our life, may want to run subset_DEAP_Rds in order to create a smaller dataset, omitting columns of no (present) interest
 
 Preamble
 # Preamble
@@ -35,20 +36,22 @@ subjVars <- c("subjectid","abcd_site","age","ageYrs", "sex","household.income","
 measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12")
 ```
 
-load data, fix some oddities, simplify variable names
-# Load and simplify
+load data and streamline
+# Load and subset
 ```{r, include=FALSE}
-activitiesFile <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/R/analysis-nda/notebooks/general/nda18_music.Rds"
-nda18 = readRDS(activitiesFile)
-data = nda18
+activitiesFile <- "C:/Users/jiversen/Documents/RDS/results/ABCD_releases_2.0.1_Rds/nda2.0.1.Rds"
+nda <- readRDS(activitiesFile)
+```
 
+fix oddities, simplify activitiesvariable names
+```{r}
 #select baseline timepoint
 if (onlyBaseline) {
-  data = data[data$eventname == "baseline_year_1_arm_1", ]
+  nda = nda[nda$eventname == "baseline_year_1_arm_1", ]
 }
 
 #sort by site, subject, age
-sort.idx = with(data,order(abcd_site, subjectid, age))
+sort.idx = with(nda, order(abcd_site, subjectid, age))
 data = data[sort.idx,]
 
 #clean up field names
@@ -142,18 +145,17 @@ for (act in activities) {
   } else {
     tmp[tmp==999] <- NA #don't know
   }
-  #tmp[tmp==999] <- NA #don't know (consider imputing with mean of other answers)
   adata[,perwk] <- tmp
 
   # minutes per session - convert from code to actual minutes
-  tspent_minutes = c(NA, 15,30,45, 60, 90, 120, 150, 180, 240) #conversion from answercode+1 to minutes (from SAIQP_ABCD_Instrument.pdf)
+  tspent_minutes = c(NA, 15, 30, 45, 60, 90, 120, 150, 180, 240) #conversion from answercode+1 to minutes (from SAIQP_ABCD_Instrument.pdf)
   tspent <- paste0(act,"_","tspent")
   tmp <- adata[,tspent]
   i999 = (tmp==999)
   tmp[i999] = NA #don't know
   tspent_ok = !is.na(tmp) #could simplify this and test for NA or 999
   tmp[tspent_ok] = tspent_minutes[tmp[tspent_ok]+1]
-  if (doImpute) { #have to to imputation after converting from code
+  if (doImpute) { #have to do imputation after converting from code
     n999 = sum(i999, na.rm=TRUE)
     mm = mean(tmp[!i999], na.rm=TRUE)
     tmp[i999] = mm
@@ -226,7 +228,7 @@ actData$musicNoSport <- actData$music_any>0 & !actData$sports_any>0
 actData$musicNoSport_p12 <- actData$music_p12 & !actData$sports_p12
 ```
 
-Make a long-form table (in activities) table, with a column for each measure
+Make a long-form (in activities) table, with a column for each measure
 ## Long-form table
 
 ```{r}
