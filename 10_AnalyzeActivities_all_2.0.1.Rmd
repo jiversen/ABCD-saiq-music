@@ -9,9 +9,9 @@ However, to simplify our life, may want to run subset_DEAP_Rds in order to creat
 Preamble
 # Preamble
 ```{r}
-rm(list=ls())
+#rm(list=ls())
 
-library(dtplyr)
+#library(dtplyr)
 library(dplyr)
 library(tidyr)
 library(data.table)
@@ -21,238 +21,71 @@ library(corrplot)
 library(tibble)
 ```
 
-Analysis parameters
-# Analysis parameters
+Load Data from 01_preprocessActivities_2.0.1.R, if needed
 ```{r}
-onlyBaseline = TRUE  # restrict to baseline timepoint
-doImpute = TRUE       # mean value imputation of 'don't know'activity amounts
-doPlot = TRUE
-```
-
-define the per-subject variables, and measurement names for each activity
-```{r}
-# define standard fields
-subjVars <- c("subjectid","abcd_site","age","ageYrs", "sex","household.income","high.educ","anthro_bmi_calc","race.ethnicity.5level","english_skill_self")
-measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12")
-```
-
-load data and streamline
-# Load and subset
-```{r, include=FALSE}
-activitiesFile <- "C:/Users/jiversen/Documents/RDS/results/ABCD_releases_2.0.1_Rds/nda2.0.1.Rds"
-nda <- readRDS(activitiesFile)
-```
-
-fix oddities, simplify activitiesvariable names
-```{r}
-#select baseline timepoint
-if (onlyBaseline) {
-  nda = nda[nda$eventname == "baseline_year_1_arm_1", ]
+# I/O
+host = Sys.info()["nodename"]
+if ( pmatch("amusing", host, nomatch=FALSE) ) {
+  dataDir <- "C:/Users/jiversen/Documents/RDS/"
+} else if ( pmatch("taiko", host, nomatch=FALSE) ) {
+  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
 }
 
-#sort by site, subject, age
-sort.idx = with(nda, order(abcd_site, subjectid, age))
-data = data[sort.idx,]
+if (!"actData" %in% ls()) {
+  activitiesFile      <- file.path(dataDir,"results/nda2.0.1_activities.Rds")
+  activitiesFileLong  <- file.path(dataDir,"results/nda2.0.1_activities_long.Rds")
+  activitiesFileMeta  <- file.path(dataDir,"results/nda2.0.1_activities_meta.RData")
+  activitiesFileMusic <- file.path(dataDir,"results/nda2.0.1_activities_music.csv")
 
-#clean up field names
-names(data) = sub("sports_activity_","",names(data)) #remove the prefix from SAIQ
-names(data) = sub("_p$","",names(data)) #remove any _p suffix
+  actData <- readRDS(activitiesFile)
+  actDataL <- readRDS(activitiesFileLong)
+  load(activitiesFileMeta)
+  musicData <- fread(activitiesFileMusic)
+}
 
-#add age in years
-#data$ageYrs = data$age / 12
-data = add_column(data, ageYrs = data$age / 12, .after="age")
-
-#fix some oddities in SAIQ
-data = add_column(data, skate_p12 = as.numeric(apply(data[c( "skate_p12_p___0",  "skate_p12_p___1")],1,function (x) any(as.numeric(as.character(x))==1, na.rm=TRUE))), .before="skate_p12_p___0")
-data = add_column(data, sboard_p12 = as.numeric(apply(data[c( "sboard_p12_p___0",  "sboard_p12_p___1")],1,function (x) any(as.numeric(as.character(x))==1, na.rm=TRUE))), .before="sboard_p12_p___0")
-# data$skate_p12  <- as.numeric(apply(data[c( "skate_p12_p___0",  "skate_p12_p___1")],1,function (x) any(as.numeric(as.character(x))==1, na.rm=TRUE)))
-# data$sboard_p12 <- as.numeric(apply(data[c("sboard_p12_p___0", "sboard_p12_p___1")],1,function (x) any(as.numeric(as.character(x))==1, na.rm=TRUE)))
-data <- data[,!names(data) %in% c("skate_p12_p___0",  "skate_p12_p___1", "sboard_p12_p___0", "sboard_p12_p___1")]
-
-#rename language var
-names(data)[names(data)=="accult_phenx_q1"] = "english_skill_self"
-
-#rename m_arts without underscore
-data <- setnames(data,old=paste0('m_arts_', measurements), new=paste0('marts_',measurements))
 ```
 
 
-Loop over the activities, calculating additional useful variables per-activity, and building the actData table
-Optionally, make a multi-panel plot with distributions of age started, hours/wk
-# Loop over activities
+Plot basic facts about each activity
+
 ```{r}
 
-# get unique activities
-activities <- unlist(strapplyc(colnames(data),"(.*)_school$"))
-
-actData = data[,subjVars]
+activities <- unlist(strapplyc(names(actData),"(.*)_school$"))
+measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12", "any", "ageStarted", "hrperwk", "hrlifetime")
 
 for (act in activities) {
-  actVars <- paste0(act,"_",measurements)
-  adata <- data[,actVars]
-
-  #convert factors to number
-  adata[,] = sapply(adata[,], function (x) as.numeric(as.character(x)))
-
-  #helper variable that is true for activity present in any context
-  adata[paste0(act,"_any")] <- apply(adata[,paste0(act,"_",c("school","outside","private","self"))], 1, function (x) any(x==1, na.rm=TRUE))
-  #adata[paste0(act,"_any")] <- apply(adata[,paste0(act,"_",c("school","outside","private","self"))], 1, function(x) "1" %in% x)
-
-  #fix up codes
-  #nyr
-  nyr = paste0(act,"_nyr")
-  tmp = adata[,nyr]
-  if (doImpute) {
-    n999 = sum(tmp==999, na.rm=TRUE)
-    mm = mean(tmp[tmp!=999], na.rm=TRUE)
-    tmp[tmp==999] <- mm
-    print(sprintf("Imputing %d %s to %.2f", n999, "nyr", mm))
-  } else {
-    tmp[tmp==999] <- NA #don't know
-  }
-  adata[,nyr] = tmp
-
-  #add an approximate 'age started' variable
-  adata[,paste0(act,'_ageStarted')] = data$ageYrs - adata[,nyr]
-  #adata = add_column(adata, `paste0(act,'_ageStarted')` = adata$ageYrs - adata[,nyr], .before=`paste0(act,"_nyr")`)
-
-  #nmonth
-  nmonth = paste0(act,"_nmonth") #to avoid any mistakes in assignment due to cut and paste, make this explicit
-  tmp = adata[,nmonth]
-  if (doImpute) {
-    n999 = sum(tmp==999, na.rm=TRUE)
-    mm = mean(tmp[tmp!=999], na.rm=TRUE)
-    tmp[tmp==999] <- mm
-    print(sprintf("Imputing %d %s to %.2f", n999, "nmonth", mm))
-  } else {
-    tmp[tmp==999] <- NA #don't know
-  }
-  adata[,nmonth] = tmp
-
-  #convert perwk and tspent to real numbers
-  # days per week
-  perwk <- paste0(act,"_","perwk")
-  tmp <- adata[,perwk]
-  tmp[tmp==8] <- 0.5 #Once every 2 weeks
-  tmp[tmp==9] <- 0.25 #One day a month (once every 4 weeks)
-  tmp[tmp==10] <- 0.1 #less than one day a month (arbitrary, small number akin to once every 2.5 months)
-  tmp[tmp==0] <- NA
-  if (doImpute) {
-    n999 = sum(tmp==999, na.rm=TRUE)
-    mm = mean(tmp[tmp!=999], na.rm=TRUE)
-    tmp[tmp==999] <- mm
-    print(sprintf("Imputing %d %s to %.2f", n999, "perwk", mm))
-  } else {
-    tmp[tmp==999] <- NA #don't know
-  }
-  adata[,perwk] <- tmp
-
-  # minutes per session - convert from code to actual minutes
-  tspent_minutes = c(NA, 15, 30, 45, 60, 90, 120, 150, 180, 240) #conversion from answercode+1 to minutes (from SAIQP_ABCD_Instrument.pdf)
-  tspent <- paste0(act,"_","tspent")
-  tmp <- adata[,tspent]
-  i999 = (tmp==999)
-  tmp[i999] = NA #don't know
-  tspent_ok = !is.na(tmp) #could simplify this and test for NA or 999
-  tmp[tspent_ok] = tspent_minutes[tmp[tspent_ok]+1]
-  if (doImpute) { #have to do imputation after converting from code
-    n999 = sum(i999, na.rm=TRUE)
-    mm = mean(tmp[!i999], na.rm=TRUE)
-    tmp[i999] = mm
-    print(sprintf("Imputing %d %s to %.2f", n999, "tspent", mm))
-  }
-  adata[,tspent] <- tmp
-
-  #create  aggregate intensity measures: mean hours per week, lifetime hours
-  #tspent*perwk*(nmonth/12) / 60
-  adata[paste0(act,"_hrperwk")] <- adata[paste0(act,"_tspent")] * adata[paste0(act,"_perwk")] * (adata[paste0(act,"_nmonth")]/12) / 60
-  adata[paste0(act,"_hrlifetime")] <- adata[paste0(act,"_tspent")] * adata[paste0(act,"_perwk")] * 4 * adata[paste0(act,"_nmonth")] * adata[paste0(act,"_nyr")] / 60
-
-  #concatenate it
-  actData <- cbind(actData, adata)
   
-  if (doPlot) {
-    par(mfrow = c(2, 2))
-    par(cex = 0.6)
-    par(mar = c(3, 3, 1, 1), oma = c(1, 1, 1, 1))
-    hist(adata[[paste0(act,'_ageStarted')]], main=paste0(act,' ageStarted'),freq=FALSE)
-    hist(adata[[paste0(act,"_hrperwk")]], main=paste0(act,' Hrs/wk'),xlim=c(0, 8),freq=FALSE)
-    
-    #get percentage participating in each context
-    n=sum(adata[[paste0(act,'_any')]])
-    percContext = apply(adata[,1:4],2,sum,na.rm=TRUE) / n
-    barplot(percContext,names.arg=c("school","outside","private","self"),main="Contexts")
-    
-    #correlation of contexts
-    mat = data.matrix(adata[,1:4])
-    mat[is.na(mat)]=0
-    cc = cor(mat)
-    corrplot(cc,diag=FALSE)
+  actVars <- paste0(act,"_",measurements)
+  adata <- actData[,actVars]
+  
+  par(mfrow = c(2, 2))
+  par(cex = 0.6)
+  par(mar = c(3, 3, 1, 1), oma = c(1, 1, 1, 1))
+  hist(adata[[paste0(act,'_ageStarted')]], main=paste0(act,' ageStarted'),freq=FALSE)
+  hist(adata[[paste0(act,"_hrperwk")]], main=paste0(act,' Hrs/wk'),xlim=c(0, 8),freq=FALSE)
+  
+  #get percentage participating in each context
+  n=sum(adata[[paste0(act,'_any')]],na.rm=TRUE)
+  percContext = apply(adata[,1:4],2,sum,na.rm=TRUE) / n
+  barplot(percContext,names.arg=c("school","outside","private","self"),main="Contexts")
+  
+  #correlation of contexts
+  mat = data.matrix(adata[,1:4])
+  mat[is.na(mat)]=0
+  cc = cor(mat)
+  corrplot(cc,diag=FALSE)
   }
-}
 ```
-
-Add aggregate participation numbers: Sports, Arts
-# Add aggregate
-```{r}
-sports <- c("base","basket","climb","fhock","fball","gym","ihock","polo","iskate","marts","lax","rugby","skate","sboard","soc","surf","wpolo","tennis","run","mma","vball","yoga")
-actData$sports_any <-  apply(actData[,paste0(sports,"_any")], 1, sum,na.rm=TRUE)
-actData$sports_p12 <- apply(actData[,paste0(sports,"_p12")], 1, sum,na.rm=TRUE)
-actData$sports_school <- apply(actData[,paste0(sports,"_school")], 1, sum,na.rm=TRUE)
-actData$sports_outside <- apply(actData[,paste0(sports,"_outside")], 1, sum,na.rm=TRUE)
-actData$sports_private <- apply(actData[,paste0(sports,"_private")], 1, sum,na.rm=TRUE)
-actData$sports_self <- apply(actData[,paste0(sports,"_self")], 1, sum,na.rm=TRUE)
-actData$sports_nyr <- apply(actData[,paste0(sports,"_nyr")], 1, mean,na.rm=TRUE)
-actData$sports_nmonth <- apply(actData[,paste0(sports,"_nmonth")], 1, mean,na.rm=TRUE)
-actData$sports_perwk <- apply(actData[,paste0(sports,"_perwk")], 1, mean,na.rm=TRUE)
-actData$sports_tspent <- apply(actData[,paste0(sports,"_tspent")], 1, mean,na.rm=TRUE)
-actData$sports_hrperwk <- apply(actData[,paste0(sports,"_hrperwk")], 1, sum,na.rm=TRUE)
-actData$sports_hrlifetime <- apply(actData[,paste0(sports,"_hrlifetime")], 1, sum,na.rm=TRUE)
-
-arts <- c("dance","music", "art", "drama", "crafts")
-actData$arts_any <-  apply(actData[,paste0(arts,"_any")], 1, any,na.rm=TRUE)
-actData$arts_p12 <- apply(actData[,paste0(arts,"_p12")], 1, any,na.rm=TRUE)
-actData$arts_school <- apply(actData[,paste0(arts,"_school")], 1, sum,na.rm=TRUE)
-actData$arts_outside <- apply(actData[,paste0(arts,"_outside")], 1, sum,na.rm=TRUE)
-actData$arts_private <- apply(actData[,paste0(arts,"_private")], 1, sum,na.rm=TRUE)
-actData$arts_self <- apply(actData[,paste0(arts,"_self")], 1, sum,na.rm=TRUE)
-actData$arts_nyr <- apply(actData[,paste0(arts,"_nyr")], 1, mean,na.rm=TRUE)
-actData$arts_nmonth <- apply(actData[,paste0(arts,"_nmonth")], 1, mean,na.rm=TRUE)
-actData$arts_perwk <- apply(actData[,paste0(arts,"_perwk")], 1, mean,na.rm=TRUE)
-actData$arts_tspent <- apply(actData[,paste0(arts,"_tspent")], 1, mean,na.rm=TRUE)
-actData$arts_hrperwk <- apply(actData[,paste0(arts,"_hrperwk")], 1, sum,na.rm=TRUE)
-actData$arts_hrlifetime <- apply(actData[,paste0(arts,"_hrlifetime")], 1, sum,na.rm=TRUE)
-
-
-actData$musicNoSport <- actData$music_any>0 & !actData$sports_any>0
-actData$musicNoSport_p12 <- actData$music_p12 & !actData$sports_p12
-```
-
-Make a long-form (in activities) table, with a column for each measure
-## Long-form table
-
-```{r}
-actDataL <- actData %>%
-  gather("activity_measure", "Value", -subjectid:-english_skill_self ) %>%
-  separate(activity_measure, c("activity", "measure"), sep='_', remove=TRUE) %>%
-  spread(measure, Value)
-actDataL <- select(actDataL, match(c(subjVars,"activity","any",measurements,"hrperwk","hrlifetime"),names(actDataL)))
-
-# some summaries by activities
-a <- actDataL %>% group_by(sex,activity) %>%
-  summarise(lifetime = mean(hrlifetime,na.rm=TRUE)) %>%
-  spread(sex, lifetime)
-```
-
 
 Plot participation in activities
 # simple distribution of participants endorsing any type of a given activity and in past 12 months
 ```{r}
-percAct <- 100*sapply(actData[paste0(activities,"_any")],sum) / nrow(actData)
+activities <- activities[1:29]
+percAct <- 100*sapply(actData[paste0(activities,"_any")],sum,na.rm=TRUE) / nrow(actData)
 percp12 <- 100*sapply(actData[paste0(activities,"_p12")],sum,na.rm=TRUE) / nrow(actData)
 
-percSport <- 100*sum(actData$sports_any,na.rm=TRUE) / nrow(actData)
-percSport_p12 <- 100*sum(actData$sports_p12,na.rm=TRUE) / nrow(actData)
+percSport <- 100*sum(actData$sports_any>0,na.rm=TRUE) / nrow(actData)
+percSport_p12 <- 100*sum(actData$sports_p12>0,na.rm=TRUE) / nrow(actData)
 percArts <- 100*sum(actData$arts_any,na.rm=TRUE) / nrow(actData)
 percArts_p12 <- 100*sum(actData$arts_p12,na.rm=TRUE) / nrow(actData)
 #percMusicNoSport <- 100*sum(actData$musicNoSport,na.rm=TRUE) / nrow(actData)
@@ -267,6 +100,7 @@ print("=== Activity endorsement: Lifetime")
 sort(percAct,decreasing = TRUE)
 par(mar=c(11,4,4,4));barplot(sort(percAct,decreasing = TRUE),las=2)
 ```
+
 How many other activies musicians are involved in & does this differ from other activities?
 ```{r}
 m <- data.matrix(actData[actData$music_p12==1 & !is.na(actData$music_p12), paste0(activities,"_p12")])
@@ -292,8 +126,8 @@ par(mar=c(11,4,4,4));barplot(sort(means,decreasing = TRUE),las=2)
 
 Activity participation by site
 ```{r}
-for (site in levels(actData$abcd_site)) {
-  thisSite = actData$abcd_site==site
+for (site in levels(actData$site_id_l)) {
+  thisSite = actData$site_id_l==site
   percp12 <- 100*sapply(actData[thisSite, paste0(activities,"_p12")],sum,na.rm=TRUE) / sum(thisSite)
   par(mar=c(11,4,4,4));barplot(sort(percp12,decreasing = TRUE),las=2,main=site)
 }
@@ -452,7 +286,8 @@ if (FALSE) {
   allData$anyArt = allData$music | allData$dance | allData$art | allData$drama | allData$crafts
   allData$anyArt_p12 = allData$music_p12 | allData$dance_p12 | allData$art_p12 | allData$drama_p12 | allData$crafts_p12
   allData$nArt = rowSums(allData[,arts], na.rm=TRUE)
-  allData$nArt_p12 = rowSums(allData[,paste0(arts,"_p12")], na.rm=TRUE)
+  allData$nArt_p12 = rowSums(allData[,paste0(arts,"_p12")], na.rm=TRUE)s
+  
 
   print(table(allData[,"nArt"],exclude = NULL))
   print(table(allData[,"nArt_p12"],exclude = NULL))
