@@ -12,8 +12,12 @@
 #          nda*_activities_long.Rds    #long form
 #          nda*_activities_meta.RData  #some convenience variables: subjVars, activities, measurements, timestamp
 
-# Version 2
+#version 2 -- add additional phenotypes besides basic demographic set
+
 rm(list=ls())
+
+ts <- format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
+scriptName <- "01_preprocessActivities_2.0.1.R"
 
 # =========================================================================
 # Settings ----------------------------------------------------------------
@@ -26,19 +30,30 @@ if ( pmatch("amusing", host, nomatch=FALSE) ) {
 } else if ( pmatch("taiko", host, nomatch=FALSE) ) {
   dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
 }
-ndaFile      <- file.path(dataDir,"ABCD_releases_2.0.1_Rds/nda2.0.1.Rds")
-outFile      <- file.path(dataDir,"results/nda2.0.1_activities.Rds")
-outFileLong  <- file.path(dataDir,"results/nda2.0.1_activities_long.Rds")
-outFileMeta  <- file.path(dataDir,"results/nda2.0.1_activities_meta.RData")
-outFileMusic <- file.path(dataDir,"results/nda2.0.1_activities_music.csv")
+scriptDir <- file.path(dataDir,"..","code/R")
+
+
+ndaFile <- file.path(dataDir,"ABCD_releases_2.0.1_Rds/nda2.0.1.Rds")
+ndaFileBaselineOnly <- file.path(dataDir,"ABCD_releases_2.0.1_Rds/nda2.0.1_baseline.Rds")
+
+prsFile <- file.path(dataDir,"merged_prs_scores.tsv")
+pcsFile <- file.path(dataDir,"plink2.eigenvec")
+
+resultDir = file.path(dataDir,"results",ts)
+dir.create(resultDir,recursive=TRUE,mode="0775")
+file.copy(file.path(scriptDir,scriptName), file.path(resultDir,scriptName)) #copy this script to output directory for replicability
+
+outFile      <- file.path(resultDir, "nda2.0.1_activities.Rds")
+outFileLong  <- file.path(resultDir, "nda2.0.1_activities_long.Rds")
+outFileMeta  <- file.path(resultDir, "nda2.0.1_activities_meta.RData")
+outFileMusic <- file.path(resultDir, "nda2.0.1_activities_music.csv")
 
 # log all output when sourcing
 
 rname <-tryCatch(sys.frame(1)$filename, error=function(cond) {return(NULL)} ) #only log when sourced
 isSourced <- (!is.null(rname))
 if ( isSourced ) {
-  ts <- format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
-  logFile = paste0(dataDir,"results/log_", basename(rname),"_",ts,".txt")
+  logFile = paste0(resultDir, "/log_", basename(rname),"_",ts,".txt")
   sink(file=logFile, split=TRUE)
   writeLines(sprintf("\n======================================\nRunning: %s\n\tOn: %s\n",rname, ts))
 }
@@ -50,7 +65,13 @@ doImputeDK = FALSE
 writeLines(sprintf("\nParameters:\n\tonlyBaseline=%s\n\tdoImputeDK=%s\n\n",onlyBaseline,doImputeDK))
 
 # Per-subject descriptive/demographic variables and covariates
-subjVars <- c("subjectid","eventname","site_id_l","age", "sex","household.income","high.educ","anthro_bmi_calc","race_ethnicity",'EUR', 'AFR', 'EAS', 'AMR',"accult_phenx_q1_p","accult_phenx_q1")
+subjVars <- c("src_subject_id","eventname","abcd_site","rel_family_id","rel_group_id","age", "sex","household.income","high.educ","anthro_bmi_calc","race_ethnicity",'EUR', 'AFR', 'EAS', 'AMR',"accult_phenx_q1_p","accult_phenx_q1")
+
+rsVars <- c("rsfmri_cor_network.gordon_auditory_network.gordon_auditory","rsfmri_cor_network.gordon_auditory_network.gordon_cingulooperc","rsfmri_cor_network.gordon_auditory_network.gordon_cinguloparietal","rsfmri_cor_network.gordon_auditory_network.gordon_dorsalattn","rsfmri_cor_network.gordon_auditory_network.gordon_frontoparietal", "rsfmri_cor_network.gordon_auditory_network.gordon_none","rsfmri_cor_network.gordon_auditory_network.gordon_retrosplenialtemporal" ,"rsfmri_cor_network.gordon_auditory_network.gordon_smhand","rsfmri_cor_network.gordon_auditory_network.gordon_smmouth","rsfmri_cor_network.gordon_auditory_network.gordon_salience","rsfmri_cor_network.gordon_auditory_network.gordon_ventralattn","rsfmri_cor_network.gordon_auditory_network.gordon_visual")
+
+phenoVarPat <- "nihtbx_.+_uncorrected"
+
+neurocogVarPc <- c("neurocog_pc1.bl", "neurocog_pc2.bl", "neurocog_pc3.bl" )
 
 # music leisure listening and reading
 musicListenVars <- c("sports_activity_lmusic_p","sports_activity_lmusic_years_p","sports_activity_lmusic_dk_p",
@@ -67,6 +88,7 @@ measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perw
 # =========================================================================
 
 library(dplyr)
+library(plyr)
 library(tidyr)
 library(data.table)
 library(tibble)
@@ -81,13 +103,71 @@ library(gsubfn)
 # Load and subset ---------------------------------------------------------
 # =========================================================================
 
-print(sprintf("Loading Rds: %s", ndaFile))
-D <- readRDS(ndaFile)
+# load NDS
+if ( onlyBaseline & file.exists(ndaFileBaselineOnly)) {
+  print(sprintf("Loading Rds: %s", ndaFileBaselineOnly))
+  D <- readRDS(ndaFileBaselineOnly)
+  names(D)[names(D)=="subjectid"] = "src_subject_id"
+  gc()
+} else {
+  print(sprintf("Loading Rds: %s", ndaFile))
+  D <- readRDS(ndaFile)
+
+  #select baseline timepoint
+  if (onlyBaseline) {
+    #isBase = grepl("^baseline_year_1_arm_1$",D$eventname)
+    #D = D[isBase,]
+    D = D[D$eventname == "baseline_year_1_arm_1", ]
+  }
+  names(D)[names(D)=="subjectid"] = "src_subject_id"
+  gc()
+  saveRDS(D,ndaFileBaselineOnly)
+  gc()
+}
+
+# add some additional information
+if (length(prsFile) > 0) {
+
+  # Helper function to reformat ids from PRS file (from univariate_models.r)
+  reformat_id <- function(id){
+    ans = unlist(strsplit(id, 'NDAR_'))[2]
+    ans = paste0('NDAR_', unlist(strsplit(ans, '_'))[1])
+    return(ans)
+  }
+
+  prs = read.table(prsFile, header=TRUE)
+  colnames(prs)[1] = 'src_subject_id'
+  reformated_rows = lapply(as.character(prs$src_subject_id), reformat_id)
+  prs = prs[!duplicated(reformated_rows),]
+  prs$src_subject_id = reformated_rows[!duplicated(reformated_rows)]
+  # Concatonate _PRS to cols
+  # colnames(prs)[2:dim(prs)[2]] = paste0(colnames(prs)[2:dim(prs)[2]], '_PRS')
+  # Join with data frame
+  D = join(D, prs, by='src_subject_id')
+  subjVars <- c(subjVars, names(prs)[-1])
+}
+
+# Read in Genetic PCs if they are given
+if (length(pcsFile) > 0){
+  # Read PCs
+  pcs = read.table(pcsFile, header=TRUE)
+  colnames(pcs)[colnames(pcs)=='IID'] = 'src_subject_id'
+  D = join(D, pcs, by='src_subject_id')
+  subjVars <- c(subjVars, names(pcs)[-1:-2])
+}
+
+#match variable patterns
+phenoVars <- names(D)[grep(phenoVarPat,names(D))]
+
+subjVars <- c(subjVars, phenoVars, neurocogVarPc, rsVars) #hail mary
+print("Subject Vars: ")
+print(subjVars)
 
 #library(data.table)
 #fwrite(D, file=paste0(dataDir,"/results/nda2.0.1_baseline.csv")) #takes ~2 minutes, 7+GB
 
 #Make a few sub-tables
+
 #= demographic
 Dsubj = D[,subjVars]
 #== add age in years
@@ -128,20 +208,18 @@ D <- D[,!names(D) %in% c("skate_p12_p___0",  "skate_p12_p___1", "sboard_p12_p___
 #== rename m_arts without underscore
 D <- setnames(D,old=paste0('m_arts_', measurements), new=paste0('marts_',measurements))
 
-#select baseline timepoint
-if (onlyBaseline) {
-  isBase = grepl("^baseline_year_1_arm_1$",Dsubj$eventname)
-  Dsubj = Dsubj[isBase,]
-  Dmr = Dmr[isBase,]
-  D = D[isBase,]
-}
-gc()
+# #select baseline timepoint
+# if (onlyBaseline) {
+#   isBase = grepl("^baseline_year_1_arm_1$",Dsubj$eventname)
+#   Dsubj = Dsubj[isBase,]
+#   Dmr = Dmr[isBase,]
+#   D = D[isBase,]
+# }
+# gc()
 
 #=========================================================================
 # Expand activities characterization -------------------------------------
 #=========================================================================
-
-
 
 # handle "Don't know" answers in one of two ways: 1) set to NA, 2) replace with mean of valid answers
 #  the logic here is DK is perhaps different than 'no answer', because we know they do an activity. The # of DKs is usually _very_ small
@@ -263,7 +341,7 @@ for (act in activities) {
 
 # music leisure listening and reading have a reduced set of measures, but we'll convert into full activities by assuming they are done in context 'self', 12 months/year, 'hours' is tspent*perwk,
 # with no way to know how it's divided up, so just use the hrperwk value.
-
+# TODO
 
 # =========================================================================
 # Add aggregate participation 'activities': all Sports, all Arts ----------
@@ -315,8 +393,9 @@ print(sprintf("== Saving: %s", outFileMeta))
 save(subjVars,activities,measurements,timestamp,file=outFileMeta)
 
 #save long-form (in activities) table, with a column for each measure
+# Note, need to be careful to update the column exclusion if adding more non-activity vars
 actDataL <- actData %>%
-  gather("activity_measure", "Value", -subjectid:-accult_phenx_q1 ) %>%
+  gather("activity_measure", "Value", -src_subject_id:-rsfmri_cor_network.gordon_auditory_network.gordon_visual ) %>%
   separate(activity_measure, c("activity", "measure"), sep='_', remove=TRUE) %>%
   spread(measure, Value)
 actDataL <- select(actDataL, match(c(subjVars,"activity","any",measurements,"hrperwk","hrlifetime"),names(actDataL)))
