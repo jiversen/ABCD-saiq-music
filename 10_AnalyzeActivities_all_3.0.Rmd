@@ -28,7 +28,7 @@ library(tibble)
 Load Data from 01_preprocessActivities_3.0.R, if needed
 ```{r}
 # have to define the timestamp of data we wish to use
-ts <- "2020-07-16_11-27-24"
+ts <- "2021-05-31_18-23-30"
 
 # I/O
 host = Sys.info()["nodename"]
@@ -42,51 +42,143 @@ if ( pmatch("amusing", host, nomatch=FALSE) ) {
 resultDir = file.path(dataDir,"results",ts)
 
 if (!"actData" %in% ls()) {
-  activitiesFile      <- file.path(resultDir,"nda2.0.1_activities.Rds")
-  activitiesFileLong  <- file.path(resultDir, "nda2.0.1_activities_long.Rds")
-  activitiesFileMeta  <- file.path(resultDir, "nda2.0.1_activities_meta.RData")
-  activitiesFileMusic <- file.path(resultDir, "nda2.0.1_activities_music.csv")
+  activitiesFile      <- file.path(resultDir,"nda3.0_activities.Rds")
+  #activitiesFileLong  <- file.path(resultDir, "nda2.0.1_activities_long.Rds")
+  #activitiesFileMeta  <- file.path(resultDir, "nda2.0.1_activities_meta.RData")
+  activitiesFileMusic <- file.path(resultDir, "nda3.0_activities_music.csv")
 
   actData <- readRDS(activitiesFile)
-  actDataL <- readRDS(activitiesFileLong)
-  load(activitiesFileMeta)
+  #actDataL <- readRDS(activitiesFileLong)
+  #load(activitiesFileMeta)
   musicData <- fread(activitiesFileMusic)
 }
 
 ```
 
+We now have activities data for baseline, year 1 and year 2.
 
 Plot basic facts about each activity
 
 ```{r}
 
-activities <- unlist(strapplyc(names(actData),"(.*)_school$"))
+hrlim=5
+
+activities <- unlist(strapplyc(names(actData),"sports_activity_(.*)_school$"))
 measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12", "any", "ageStarted", "hrperwk", "hrlifetime")
 
-for (act in activities) {
+activities <- c('music')
+for (act0 in activities) {
+  
+  act <- paste0('sports_activity_',act0)
   
   actVars <- paste0(act,"_",measurements)
-  adata <- actData[,actVars]
   
-  par(mfrow = c(2, 2))
-  par(cex = 0.6)
-  par(mar = c(3, 3, 1, 1), oma = c(1, 1, 1, 1))
-  hist(adata[[paste0(act,'_ageStarted')]], main=paste0(act,' ageStarted'),freq=FALSE)
-  hist(adata[[paste0(act,"_hrperwk")]], main=paste0(act,' Hrs/wk'),xlim=c(0, 8),freq=FALSE)
-  #hist(adata[[paste0(act,'_hrlifetime')]], main=paste0(act,' hr lifetime'),xlim=c(0, 1000),breaks = 80,freq=FALSE)
-  
-  #get percentage participating in each context
-  n=sum(adata[[paste0(act,'_any')]],na.rm=TRUE)
-  percContext = apply(adata[,1:4],2,sum,na.rm=TRUE) / n
-  barplot(percContext,names.arg=c("school","outside","private","self"),main="Contexts")
-  
-  #correlation of contexts
-  mat = data.matrix(adata[,1:4])
-  mat[is.na(mat)]=0
-  cc = cor(mat)
-  corrplot(cc,diag=FALSE)
+  for (event in c('baseline_year_1_arm_1','1_year_follow_up_y_arm_1','2_year_follow_up_y_arm_1')) {
+    
+    print(event)
+    #mean age
+    print(mean(actData[actData$eventname==event,'age']/12,na.rm=T))
+    adata <- actData[actData$eventname==event, actVars]
+    any <- adata[[paste0(act,'_any')]] == TRUE
+    adata <- adata[any,]
+    n=sum(adata[[paste0(act,'_any')]],na.rm=TRUE)
+    print(n)
+    
+    par(mfrow = c(2, 2))
+    par(cex = 0.6)
+    par(mar = c(3, 3, 1, 1), oma = c(1, 1, 1, 1))
+    hist(adata[[paste0(act,'_ageStarted')]], main=paste0(act0,' ageStarted'),freq=FALSE)
+    hist(adata[[paste0(act,"_hrperwk")]], main=paste0(act0,' Hrs/wk'),xlim=c(0, 8),freq=FALSE,breaks=seq(0,24*7,0.5))
+    #hist(adata[[paste0(act,'_hrlifetime')]], main=paste0(act,' hr lifetime'),xlim=c(0, 1000),breaks = 80,freq=FALSE)
+    print(summary(adata[[paste0(act,"_hrperwk")]]))
+    print(100*sum(adata[[paste0(act,"_hrperwk")]] > hrlim, na.rm = T)/n)
+    
+    print(summary(adata[[paste0(act,"_hrlifetime")]]))
+
+    
+    #get percentage participating in each context
+    n=sum(adata[[paste0(act,'_any')]],na.rm=TRUE)
+    percContext = apply(adata[,1:4],2,sum,na.rm=TRUE) / n
+    barplot(percContext,names.arg=c("school","outside","private","self"),main="Contexts")
+    
+    #correlation of contexts
+    mat = data.matrix(adata[,1:4])
+    mat[is.na(mat)]=0
+    cc = cor(mat)
+    corrplot(cc,diag=FALSE)
   }
+}
+  
 ```
+
+trends across time
+
+```{r}
+  adata <- actData[, c('src_subject_id','eventname','age',actVars)]
+  #rename events
+  adata[adata$eventname=='baseline_year_1_arm_1','tpname'] = 'BL (10)'
+  adata[adata$eventname=='1_year_follow_up_y_arm_1','tpname'] = 'Y1 (11)'
+  adata[adata$eventname=='2_year_follow_up_y_arm_1','tpname'] = 'Y2 (12)'
+
+  adata[!is.na(adata$sports_activity_music_hrperwk) & adata$sports_activity_music_hrperwk==0, 'sports_activity_music_hrperwk']=NA
+  
+  ggplot(adata,aes(x=tpname,y=sports_activity_music_hrperwk))+geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)+
+     theme(text = element_text(size = 20)) 
+    #scale_fill_viridis(discrete=TRUE) +
+    #scale_color_viridis(discrete=TRUE) 
+
+    ggplot(adata,aes(x=tpname,y=sports_activity_music_hrperwk))+geom_boxplot() 
+
+  
+  ggplot(adata,aes(x=sports_activity_music_hrperwk, fill=tpname)) + geom_histogram(position='identity',alpha=0.3,bins=50)
+  
+```
+trends by SES
+
+```{r}
+
+hrlim=1.5
+  adata <- actData[, c('src_subject_id','eventname','age','sex',paste0('PC',1:10),'household.income','high.educ','abcd_site','rel_family_id',actVars)]
+  #rename events
+  adata[adata$eventname=='baseline_year_1_arm_1','tpname'] = 'BL (10)'
+  adata[adata$eventname=='1_year_follow_up_y_arm_1','tpname'] = 'Y1 (11)'
+  adata[adata$eventname=='2_year_follow_up_y_arm_1','tpname'] = 'Y2 (12)'
+
+  adata[!is.na(adata$sports_activity_music_hrperwk) & adata$sports_activity_music_hrperwk==0, 'sports_activity_music_hrperwk']=NA
+  
+  ggplot(adata,aes(x=household.income,y=sports_activity_music_hrperwk))+geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)+
+     theme(text = element_text(size = 20)) 
+    #scale_fill_viridis(discrete=TRUE) +
+    #scale_color_viridis(discrete=TRUE) 
+  
+    ggplot(adata,aes(x=high.educ,y=sports_activity_music_hrperwk))+geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)+
+     theme(text = element_text(size = 20)) 
+
+    #ggplot(adata,aes(x=tpname,y=sports_activity_music_hrperwk))+geom_boxplot() 
+
+  
+  #ggplot(adata,aes(x=sports_activity_music_hrperwk, fill=tpname)) + geom_histogram(position='identity',alpha=0.3,bins=50)
+    
+  cov='age+sex+PC1+PC2+PC3+PC4+PC5+PC5+PC7+PC8+PC9+PC10'
+  IV='household.income'
+  IV='high.educ'
+  DV='sports_activity_music_hrperwk'
+  form = paste0(DV,' ~ ',IV,'+',cov)
+  form.r = paste0(DV,' ~ ',cov)
+  random='~(1|abcd_site/rel_family_id)'
+  
+  minc<-gamm4(formula=formula(form),random=formula(random), data=adata)
+  minc.r<-gamm4(formula=formula(form.r),random=formula(random), data=adata)
+
+  summary(minc$gam)
+  summary(minc.r$gam)
+  anova(minc$gam,minc.r$gam)
+  
+  r.squaredLR(minc$mer, minc.r$mer)
+  
+  # high.educ explains 1.9% more variance (an increase of 50%)
+```
+
 
 Plot participation in activities
 # simple distribution of participants endorsing any type of a given activity and in past 12 months

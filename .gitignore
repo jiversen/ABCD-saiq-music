@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+*.xlsx
+*.html
+*.log
+*.tex
+*.svg
+gfa_ses
