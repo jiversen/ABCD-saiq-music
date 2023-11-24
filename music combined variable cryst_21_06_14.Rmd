@@ -1,0 +1,185 @@
+---
+title: "Bivariate latent change score: music education and crystallized intelligence"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+
+library(lavaan)
+library(ggplot2)
+library(reshape2)
+
+#=================
+#==  load data  ==
+#=================
+#dir = "/Users/chasereuter/Documents/r docs/abcd/elizabeth paper/"
+# dat = readRDS(paste0(dir , "activity3.0.Rds"))
+# dat2 =readRDS(paste0(dir , "nda3.0trim.Rds"))
+# 
+# dat = merge(dat, dat2, by = c("src_subject_id","eventname"))
+
+activitesFileMusic = "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data//results/2021-05-31_18-23-30/nda3.0_activities_music.csv"
+
+dat = read.csv(activitesFileMusic)
+dat = dat[,c("src_subject_id","eventname","sports_activity_music_hrlifetime","nihtbx_cryst_uncorrected")]
+dat = dat[dat$eventname %in% c("baseline_year_1_arm_1","2_year_follow_up_y_arm_1"),]
+#save copy into "dat_main"
+dat_main = dat
+
+
+#===============
+#==  process  ==
+#===============
+
+
+# ident = c("src_subject_id","eventname")
+# mus_bl = c("sports_activity_ss_music_nmonth_p", "sports_activity_ss_music_perwk_p", "sports_activity_ss_music_tspent_p")
+# mus_fu = paste0(mus_bl, "_l")
+
+datbl = dat[dat$eventname == "baseline_year_1_arm_1",]
+datfu = dat[dat$eventname == "2_year_follow_up_y_arm_1",]
+names(datfu)[names(datfu) == "nihtbx_cryst_uncorrected"] = "nihtbx_cryst_uncorrected_l"
+names(datfu)[names(datfu) == "sports_activity_music_hrlifetime"] = "sports_activity_music_hrlifetime_l"
+
+dat = merge(datbl,datfu, by = "src_subject_id", all = T)
+
+
+#=================
+#==  analysis  ==
+#=================
+
+
+#========================================================
+# ---- use standardized measures from here out ----
+#========================================================
+# datfu2 = datfu
+# names(datfu2) = gsub("_l", "", names(datfu2))
+# dat2 = rbind(datbl,datfu2)
+# dat2 = process_dat(dat2, contains_l_vars = F)
+# 
+# dat = dat2
+# dat$nihtbx_cryst_uncorrected = scale(dat$nihtbx_cryst_uncorrected)
+# dat$sports_activity_ss_music_nmonth_p = scale(dat$sports_activity_ss_music_nmonth_p)
+# 
+# datbl = dat[dat$eventname == "baseline_year_1_arm_1",]
+# datfu = dat[dat$eventname == "2_year_follow_up_y_arm_1",]
+# names(datfu)[3:6] = paste0(names(datfu)[3:6], "_l")
+# datbl$eventname = NULL
+# datfu$eventname = NULL
+# 
+# dat = merge(datbl,datfu, by = "src_subject_id", all = T)
+
+
+
+# log transform?
+LOG = T
+
+if (LOG){
+  dat$sports_activity_music_hrlifetime[dat$sports_activity_music_hrlifetime == 0] = NA
+  dat$sports_activity_music_hrlifetime_l[dat$sports_activity_music_hrlifetime_l == 0] = NA
+  
+  dat$mus_T1 = log(dat$sports_activity_music_hrlifetime)
+  dat$mus_T2 = log(dat$sports_activity_music_hrlifetime_l)
+
+} else {
+  dat$mus_T1 = dat$sports_activity_music_hrlifetime
+  dat$mus_T2 = dat$sports_activity_music_hrlifetime_l
+
+}
+
+
+dat$cryst_T1 = dat$nihtbx_cryst_uncorrected
+dat$cryst_T2 = dat$nihtbx_cryst_uncorrected_l
+
+```
+
+Run Model
+```{r}
+
+BLCS<-'
+
+mus_T2 ~ 1*mus_T1     # This parameter regresses COG_T2 perfectly on COG_T1
+dmus1 =~ 1*mus_T2     # This defines the latent change score factor as measured perfectly by scores on COG_T2
+dmus1 ~ 1             # This estimates the intercept of the change score 
+mus_T1 ~  1           # This estimates the intercept of COG_T1 
+mus_T2 ~ 0*1          # This constrains the intercept of COG_T2 to 0
+
+cryst_T2 ~ 1*cryst_T1     # This parameter regresses NEU_T2 perfectly on NEU_T1
+dcryst1 =~ 1*cryst_T2     # This defines the latent change score factor as measured perfectly by scores on NEU_T2
+cryst_T2 ~ 0*1          # This line constrains the intercept of NEU_T2 to 0
+cryst_T2 ~~ 0*cryst_T2    # This fixes the variance of the NEU_T1 to 0  
+
+dmus1 ~~  dmus1       # This estimates the variance of the change scores
+mus_T1 ~~   mus_T1    # This estimates the variance of the COG_T1 
+mus_T2 ~~ 0*mus_T2    # This fixes the variance of the COG_T2 to 0  
+
+dcryst1 ~ 1             # This estimates the intercept of the change score 
+cryst_T1 ~ 1            # This estimates the intercept of NEU_T1 
+dcryst1 ~~ dcryst1        # This estimates the variance of the change scores 
+cryst_T1 ~~ cryst_T1      # This estimates the variance of NEU_T1 
+
+dcryst1~mus_T1+cryst_T1   # This estimates the COG to NEU coupling parameter and the COG to COG self-feedback
+dmus1~cryst_T1+mus_T1   # This estimates the NEU to COG coupling parameter and the NEU to NEU self-feedback
+
+mus_T1 ~~  cryst_T1     # This estimates the COG_T1 NEU_T1 covariance
+dmus1~~dcryst1          # This estimates the dCOG and dNEU covariance
+'
+
+
+fitBLCS <- lavaan(BLCS, data=dat, estimator='mlr',fixed.x=FALSE,missing='fiml')
+summary(fitBLCS, fit.measures=TRUE, standardized=TRUE, rsquare=TRUE)
+```
+
+
+Plotting
+```{r}
+
+# summary(fitBLCS)
+# cat("\n\n_____\n\n")
+# summary(fitBLCS2)
+
+
+# theme_set(theme_grey(base_size = 18)) #increase text size
+samplesize = nrow(dat)
+id=factor(1:samplesize)
+plotdattemp=data.frame(c(dat$mus_T1,dat$cryst_T1),c(dat$mus_T2,dat$cryst_T2),as.factor(c(id,id)),c(rep('mus',times=samplesize),rep('cryst',times=samplesize)))
+colnames(plotdattemp)<-c('T1', 'T2','id','Domain')
+plotdat<-melt(plotdattemp,by='id')
+
+#ggplot(plotdat,aes(variable,value,group=id,col=Domain))+geom_point(size=1,alpha=.01)+geom_line(alpha=.01)+
+#  ggtitle('Bivariate Latent Change Score model')+ylab('Scores')+xlab('Time points')+facet_grid(~Domain)
+
+a=0.02 
+
+ggplot(plotdat[plotdat$Domain=="mus",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a)+
+  ggtitle('Bivariate Latent Change Score model Music')+ylab('Scores')+xlab('Time points')
+
+ggplot(plotdat[plotdat$Domain=="cryst",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a)+
+  ggtitle('Bivariate Latent Change Score model Cryst')+ylab('Scores')+xlab('Time points')
+
+```
+
+Describe music change
+```{r}
+dmus=exp(dat$mus_T2)-exp(dat$mus_T1)
+dmus_log = log(dmus)
+
+hist(dmus)
+breaks=log(c(1,3,10,30,100,300,1000,3000))
+hist(dmus_log,breaks=breaks)
+
+#Stops/Starts
+hasMusT1=!is.na(dat$mus_T1)
+hasMusT2=!is.na(dat$mus_T2)
+
+nMusT1=sum(hasMusT1)
+nT1=nrow(datbl)
+nMusT2=sum(hasMusT2)
+nT2=nrow(datfu)
+nMusBoth=sum(hasMusT1&hasMusT2)
+
+```
