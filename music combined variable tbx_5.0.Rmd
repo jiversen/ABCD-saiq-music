@@ -1,0 +1,417 @@
+---
+title: "Bivariate latent change score: music education and crystallized intelligence"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+
+Define variables
+```{r}
+rm(list=ls())
+
+#define activity variable of interest
+act = 'music'
+#act = 'sports'
+actVar = paste0(act, '_hrlifetime')
+
+#define cognitive variable of interest
+cogs = c("picvocab", "flanker","list","cardsort","pattern","picture","reading","fluidcomp","cryst","totalcomp")
+idx = 8 #fluid 9 #cryst
+cog = cogs[idx]
+cogVar = paste0("nihtbx_", cog,"_uncorrected")
+
+#cog = "smri_area_cort.fuzzy12_central.lh"
+#cog = "smri_area_cort.fuzzy12_occipital.lh"
+
+#cog = "dmri_dti.vol_fiber.at_tslf.rh"
+```
+
+Load
+```{r}
+library(lavaan)
+library(ggplot2)
+library(reshape2)
+
+#=================
+#==  load data  ==
+#=================
+
+ts <- "2023-11-28_18-23-30"
+
+# I/O
+host = Sys.info()["nodename"]
+if ( pmatch("amusing", host, nomatch=FALSE) ) {
+  dataDir <- "C:/Users/jiversen/Documents/RDS/"
+} else if ( pmatch("taiko", host, nomatch=FALSE) ) {
+  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
+} else if ( pmatch("helmholtz", host, nomatch=FALSE) ) {
+  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
+}
+
+resultDir = file.path(dataDir,"results",ts)
+
+activitiesFile      <- file.path(resultDir,"abcd_5.0_activities.Rds")
+
+actData <- readRDS(activitiesFile)
+colnames(actData) <- gsub("sai_p_", "", colnames(actData)) #remove prefix from all var names
+
+source('./nc_y_nihtb_5.0.R')
+source("./abcd_y_lt_5.0.R")
+
+keyCols = c('src_subject_id','eventname')
+
+actData <- left_join(actData, abcd_y_lt[,c(keyCols, 'rel_family_id')], by=keyCols, relationship="one-to-one")
+actData <- left_join(actData, nc_y_nihtb[,c(keyCols, 'nihtbx_fluidcomp_uncorrected', 'nihtbx_cryst_uncorrected')], by=keyCols, relationship="one-to-one")
+
+dat0 = actData
+
+
+```
+
+```{r}
+
+# include only baseline and year 2 (TODO: There is activity data at year 1 as well)
+
+saiqEventnames <- c("baseline_year_1_arm_1","2_year_follow_up_y_arm_1")
+
+dat = dat0[,c("src_subject_id","eventname",actVar,cogVar)]
+dat = dat[dat$eventname %in% saiqEventnames,]
+#save copy into "dat_main"
+dat_main = dat
+
+#create selection vectors for each timepoint, use to look up 'previous' timepoint's value for nyr
+tpidx <- list()
+en <- dat[['eventname']]
+for (i in 1:length(saiqEventnames)) {
+  tpidx[i] <- list(grepl(saiqEventnames[i], en))
+}
+names(tpidx) <- saiqEventnames
+
+#Split into columns by timepoint
+dat_all = reshape()
+
+#=================
+#==  analysis  ==
+#=================
+
+
+#========================================================
+# ---- use standardized measures from here out ----
+#========================================================
+# datfu2 = datfu
+# names(datfu2) = gsub("_l", "", names(datfu2))
+# dat2 = rbind(datbl,datfu2)
+# dat2 = process_dat(dat2, contains_l_vars = F)
+# 
+# dat = dat2
+# dat$nihtbx_cryst_uncorrected = scale(dat$nihtbx_cryst_uncorrected)
+# dat$sports_activity_ss_music_nmonth_p = scale(dat$sports_activity_ss_music_nmonth_p)
+# 
+# datbl = dat[dat$eventname == "baseline_year_1_arm_1",]
+# datfu = dat[dat$eventname == "2_year_follow_up_y_arm_1",]
+# names(datfu)[3:6] = paste0(names(datfu)[3:6], "_l")
+# datbl$eventname = NULL
+# datfu$eventname = NULL
+# 
+# dat = merge(datbl,datfu, by = "src_subject_id", all = T)
+
+
+dat$mus_T1 = dat[[actVar]]
+dat$mus_T2 = dat[[paste0(actVar,"_l")]]
+
+dat_all = dat #store with all participants
+
+```
+Look at patterns of music engagement:
+```{r}
+dat = dat_all
+N = nrow(dat)
+
+# music @ baseline N=4471
+nT1 = sum(dat$mus_T1>0)
+
+# music both timepoints
+iT1T2 = dat$mus_T1>0 & dat$mus_T2>0
+nBoth = sum(iT1T2, na.rm=T)
+nBoth
+
+# start @ T2  N=1316
+iT2 = dat$mus_T1==0 & dat$mus_T2>0
+nStartT2 = sum(iT2, na.rm=TRUE)
+nStartT2
+
+# any music N=5787 (sum of previous 2 check)
+#sum(dat$mus_T1>0 | dat$mus_T2>0, na.rm=TRUE)
+
+# stop after T1 N=563
+iT1 = dat$mus_T1>0 & (dat$mus_T2 == dat$mus_T1)
+nStopT2 = sum(iT1, na.rm=TRUE)
+nStopT2
+
+pAll = (nT1-nStopT2) / N
+pT1Only = nStopT2 / N
+pT2Only = nStartT2 / N
+
+plot(c(0,2.2),c(0,N),type='n',main="music participation",ylab="participant",xlab="event (BL, T2)")
+rect(0,0,2,nT1-nStopT2,col="darkred", border="transparent")
+rect(0,nT1-nStopT2,1,nT1,col="goldenrod2",border="transparent")
+rect(1,nT1,2,nStartT2+nT1,col="dodgerblue3", border="transparent")
+rect(0,0,2,N,col="transparent",border="black")
+
+text(2.1,(nT1-nStopT2)/2,format(pAll*100,digits=3))
+text(2.1,(nT1-nStopT2/2),format(pT1Only*100,digits=3))
+text(2.1,(nT1+nStartT2/2),format(pT2Only*100,digits=3))
+
+
+```
+
+# Various restrictions to subsets (pick one)
+## include everyone with any music
+
+```{r}
+#include everyone with any music [N=5787]
+dat=dat_all
+dmus = dat$mus_T2-dat$mus_T1
+summus = dat$mus_T2+dat$mus_T1
+toInclude = (!is.na(dmus) & summus>0)
+toInclude = dat$mus_T1>0 | dat$mus_T2>0
+toInclude[is.na(toInclude)] = FALSE
+N = sum(toInclude,na.rm=T)
+dat = dat[toInclude,]
+
+iT1T2 = iT1T2[toInclude]
+iT1 = iT1[toInclude]
+iT2 = iT2[toInclude]
+```
+
+## include everyone with music at both timepoints and is increasing
+```{r}
+#include everyone with music at both timepoints and is increasing [N=2066]
+dat=dat_all
+
+iInc = dat$mus_T1>0 & (dat$mus_T2 > dat$mus_T1)
+toInclude = iInc
+toInclude[is.na(toInclude)] = FALSE
+N = sum(toInclude,na.rm=T)
+dat = dat[toInclude,]
+
+iT1T2 = iT1T2[toInclude] #verified all false
+iT1 = iT1[toInclude] #verified all false
+iT2 = iT2[toInclude] #verified all true
+```
+
+
+## include everyone with music at both timepoints and increasing or constant
+```{r}
+#include everyone with music at both timepoints and is increasing or constant [N=2629]
+dat=dat_all
+
+iInc = dat$mus_T1>0 & (dat$mus_T2 >= dat$mus_T1)
+toInclude = iInc
+toInclude[is.na(toInclude)] = FALSE
+N = sum(toInclude,na.rm=T)
+dat = dat[toInclude,]
+
+iT1T2 = iT1T2[toInclude] #verified all false
+iT1 = iT1[toInclude] #verified all false
+iT2 = iT2[toInclude] #verified all true
+```
+
+
+## include only those starting at T2 (Fails)
+```{r}
+#include only those starting T2 [N=1316] *FAILS--no variance at T1, as all are 0
+dat=dat_all
+
+iInc = dat$mus_T1==0 & (dat$mus_T2 > 0)
+toInclude = iInc
+toInclude[is.na(toInclude)] = FALSE
+N = sum(toInclude,na.rm=T)
+dat = dat[toInclude,]
+
+iT1T2 = iT1T2[toInclude]
+iT1 = iT1[toInclude] #verified all false
+iT2 = iT2[toInclude] #verified all false
+```
+
+
+## include only musicians with change in hours
+```{r}
+#include only musicians with change in hours [is there an age confound?] [N=3382]
+dat = dat_all
+dmus = dat$mus_T2-dat$mus_T1
+toInclude = (dmus>0 & !is.na(dmus))
+toInclude[is.na(toInclude)] = FALSE
+dat = dat[toInclude==T,]
+
+```
+
+```{r}
+#test those with no change (i.e. stopped music)--model doesn't work XX
+dmus = dat$mus_T2-dat$mus_T1
+dat = dat[dmus==0 & !is.na(dmus),]
+
+```
+
+
+```{r}
+# log transform? 
+logStr = "";
+LOG = T
+
+if (LOG){
+  
+  # as a convenience map 0 hours to 0 after log (makes plotting nicer, but need to undo when converting from log)
+  dat$mus_T1[dat$mus_T1 == 0] = 1 #was "NA" but that loses anyone who started at tp2
+  dat$mus_T2[dat$mus_T2 == 0] = 1
+  
+  dat$mus_T1 = log(dat$mus_T1)
+  dat$mus_T2 = log(dat$mus_T2)
+  
+  logStr = "Log "
+
+}
+
+dat$cog_T1 = dat[[cogVar]]
+dat$cog_T2 = dat[[paste0(cogVar,"_l")]]
+
+```
+
+
+Run Model
+```{r}
+
+#we use mus and cog as generics, but represent actual variable names in actVar and cogVar
+
+BLCS<-'
+
+mus_T2 ~ 1*mus_T1     # This parameter regresses MUS_T2 perfectly on MUS_T1
+dmus1 =~ 1*mus_T2     # This defines the latent change score factor as measured perfectly by scores on MUS_T2
+dmus1 ~ 1             # This estimates the intercept of the change score 
+mus_T1 ~  1           # This estimates the intercept of MUS_T1 
+mus_T2 ~ 0*1          # This constrains the intercept of MUS_T2 to 0
+
+cog_T2 ~ 1*cog_T1     # This parameter regresses COG_T2 perfectly on COG_T1
+dcog1 =~ 1*cog_T2     # This defines the latent change score factor as measured perfectly by scores on COG_T2
+cog_T2 ~ 0*1          # This line constrains the intercept of COG_T2 to 0
+cog_T2 ~~ 0*cog_T2    # This fixes the variance of the COG_T1 to 0  
+
+dmus1 ~~  dmus1       # This estimates the variance of the change scores
+mus_T1 ~~   mus_T1    # This estimates the variance of the MUS_T1 
+mus_T2 ~~ 0*mus_T2    # This fixes the variance of the MUS_T2 to 0  
+
+dcog1 ~ 1             # This estimates the intercept of the change score 
+cog_T1 ~ 1            # This estimates the intercept of COG_T1 
+dcog1 ~~ dcog1        # This estimates the variance of the change scores 
+cog_T1 ~~ cog_T1      # This estimates the variance of COG_T1 
+
+dcog1~mus_T1+cog_T1   # This estimates the MUS to COG coupling parameter and the COG to COG self-feedback
+dmus1~cog_T1+mus_T1    # This estimates the COG to MUS coupling parameter and the NEU to NEU self-feedback
+
+mus_T1 ~~  cog_T1     # This estimates the MUS_T1 COG_T1 covariance
+dmus1~~dcog1          # This estimates the dMUS and dCOG covariance
+'
+
+cat(paste0("\n\n==== ", actVar ," vs. ", cogVar, " ====\n\n"))
+fitBLCS <- lavaan(BLCS, data=dat, estimator='mlr',fixed.x=FALSE,missing='fiml',em.h1.iter.max=1000)
+#robust ml, full information max likelihood (case-by-case with all available data)
+summary(fitBLCS, fit.measures=TRUE, standardized=TRUE, rsquare=TRUE)
+varTable(fitBLCS)
+```
+
+
+Plotting
+
+```{r}
+library(lavaanPlot)
+
+labels=list(mus_T1 = paste0(act,"_T1"), mus_T2 = paste0(act,"_T2"), dmus1 = paste0("d",act),cog_T1 = paste0(cog,"_T1"), cog_T2 = paste0(cog,"_T2"), dcog1 = paste0("d",cog))
+
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),labels=labels)
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),stand=T,labels=labels)
+
+
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=T,stars="covs",edge_options=list(color="grey"),stand=F,labels=labels)
+
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=T,stars="covs",edge_options=list(color="grey"),stand=T,labels=labels)
+
+#stars: latent, regress, covs
+
+labels=list(mus_T1 = paste0(act,"_T1"), mus_T2 = paste0(act,"_T2"), dmus1 = paste0("d",act),cog_T1 = paste0(cog,"_T1"), cog_T2 = paste0(cog,"_T2"), dcog1 = paste0("d",cog))
+plot = lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,stars="covs",edge_options=list(color="grey"),labels=labels)
+svg = DiagrammeRsvg::export_svg(plot)
+cat(file=paste0(act,"_",cog,".svg"),svg)
+
+```
+
+```{r}
+
+# summary(fitBLCS)
+# cat("\n\n_____\n\n")
+# summary(fitBLCS2)
+
+
+# theme_set(theme_grey(base_size = 18)) #increase text size
+samplesize = nrow(dat)
+id=factor(1:samplesize)
+
+musGroup = rep('',times=samplesize)
+musGroup[iT1T2]='Both'
+musGroup[iT1]='T1'
+musGroup[iT2]='T2'
+
+musGroupColor = rep('black',times=samplesize);
+musGroupColor[iT1T2]='darkred'
+musGroupColor[iT1]='goldenrod2'
+musGroupColor[iT2]='dodgerblue3'
+
+plotdattemp=data.frame(c(dat$mus_T1,dat$cog_T1),c(dat$mus_T2,dat$cog_T2),as.factor(c(id,id)),
+                       c(rep('mus',times=samplesize),rep('cog',times=samplesize)),c(musGroup,rep('',times=samplesize)), c(musGroupColor,rep('',times=samplesize)))
+colnames(plotdattemp)<-c('T1', 'T2','id','Domain','MusGroup','MusGroupColor')
+plotdat<-melt(plotdattemp,by='id')
+
+#ggplot(plotdat,aes(variable,value,group=id,col=Domain))+geom_point(size=1,alpha=.01)+geom_line(alpha=.01)+
+#  ggtitle('Bivariate Latent Change Score model')+ylab('Scores')+xlab('Time points')+facet_grid(~Domain)
+
+a=0.05
+
+ggplot(plotdat[plotdat$Domain=="mus",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a)+
+  ggtitle(paste0("Timepont changes in ",logStr,actVar))+ylab('Scores')+xlab('Time points')
+
+p <- ggplot(plotdat[plotdat$Domain=="cog",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a)+
+  ggtitle(paste0("Timepont changes in  ", cog))+ylab('Scores')+xlab('Time points')
+ggExtra::ggMarginal(p,type="density",margins="y",size=4)
+
+p <- ggplot(plotdat[plotdat$Domain=="mus",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a)+
+  ggtitle(paste0("Timepont changes in ",logStr,actVar))+ylab('Scores')+xlab('Time points')
+ggExtra::ggMarginal(p,type="density",margins="y",size=4)
+
+#ggplot(plotdat[plotdat$Domain=="mus",],aes(variable,value,group=id))+geom_point(size=1,alpha=a)+geom_line(alpha=a,color=musGroupColor[plotdat$Domain=="mus"])+
+#  ggtitle(paste0("Timepont changes in ",logStr,actVar))+ylab('Scores')+xlab('Time points')
+
+```
+
+Describe music change
+```{r}
+dmus=exp(dat$mus_T2)-exp(dat$mus_T1)
+dmus_log = log(dmus)
+dmus_log = dmus_log[is.finite(dmus_log)]
+
+hist(dmus,100)
+breaks=log(c(.05,1,3,10,30,100,300,1000,3000))
+hist(dmus_log,breaks=breaks)
+
+#Stops/Starts
+hasMusT1=(dat$mus_T1 > 0)
+hasMusT2=((dat$mus_T2 - dat$mus_T1) > 0)
+
+nMusT1=sum(hasMusT1)
+nT1=nrow(datbl)
+nMusT2=sum(hasMusT2)
+nT2=nrow(datfu)
+nMusBoth=sum(hasMusT1&hasMusT2)
+
+```

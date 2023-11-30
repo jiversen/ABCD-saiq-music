@@ -1,0 +1,634 @@
+---
+title: "ABCD NDA 3.0 activities questionnaire"
+author: "John R Iversen"
+output: github_document
+fig_width: 6 
+fig_height: 4 
+---
+
+Date Prepared: `r Sys.time()`
+Analyze ABCD Activities questionnaire from ABCD 5.0 (doi:10.15154/8873-zj65 ). 
+
+Run after 01_preprocessActivities_3.0.R
+
+??No longer need to call this after running merge_data_music, core_demographics_music and categorical_extension_music
+However, to simplify our life, may want to run subset_DEAP_Rds in order to create a smaller dataset, omitting columns of no (present) interest
+
+NB: can extract all R into a new file using
+
+knitr:purl("/Users/jri/Documents/ Research/Projects/simphony/ABCD/Code/R/10_AnalyzeActivities_all_3.0.Rmd",documentation=2)
+
+It's easier to debug
+
+
+# Preamble
+```{r load-libraries, results="hide"}
+rm(list=ls())
+
+#library(dtplyr)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(gsubfn)
+library(rlang)
+library(corrplot)
+library(tibble)
+library(ggplot2)
+library(gamm4)
+library(MuMIn)
+```
+
+# Load Data from 01_preprocessActivities_5.0.R, if needed
+```{r load-data}
+# have to define the timestamp of data we wish to use
+ts <- "2023-11-29_15-40-57"
+
+# I/O
+host = Sys.info()["nodename"]
+if ( pmatch("amusing", host, nomatch=FALSE) ) {
+  dataDir <- "C:/Users/jiversen/Documents/RDS/"
+} else if ( pmatch("taiko", host, nomatch=FALSE) ) {
+  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
+} else if ( pmatch("helmholtz", host, nomatch=FALSE) ) {
+  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
+}
+
+resultDir = file.path(dataDir,"results",ts)
+
+if (!"actData" %in% ls()) {
+  activitiesFile      <- file.path(resultDir,"abcd_5.0_activities.Rds")
+  #activitiesFileLong  <- file.path(resultDir, "nda2.0.1_activities_long.Rds")
+  #activitiesFileMeta  <- file.path(resultDir, "nda2.0.1_activities_meta.RData")
+  activitiesFileMusic <- file.path(resultDir, "abcd_5.0_activities_music.csv")
+  activitiesFileInst <- file.path(resultDir, "abcd_5.0_activities_inst.Rds")
+
+  actData <- readRDS(activitiesFile)
+  colnames(actData) <- gsub("sai_p_", "", colnames(actData)) #remove prefix from all var names
+  actData0 = actData
+
+  #actDataL <- readRDS(activitiesFileLong)
+  #load(activitiesFileMeta)
+  musicData <- fread(activitiesFileMusic)
+  instData <- readRDS(activitiesFileInst)
+  
+  # strip 'sports_activity_' prefix from all column names
+  colnames(actData) <- gsub("sports_activity_", "", colnames(actData))
+}
+
+```
+
+In 5.0 We have full activities data for baseline, year 1, year 2 and year 3; partial for year 4.
+
+# Plot basic facts about each activity by timepoint
+
+```{r activity-description-by-timepoint, fig.width=10, fig.height=6}
+
+events = c('baseline_year_1_arm_1','1_year_follow_up_y_arm_1','2_year_follow_up_y_arm_1','3_year_follow_up_y_arm_1','4_year_follow_up_y_arm_1')
+hrlim=5
+
+activities_full <- unlist(strapplyc(names(actData),"(.*)_school$"))
+measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12", "any", "ageStarted", "hrperwk","hrperyr", "hrlifetime","endorsed")
+
+activities <- c('music')
+for (act in activities) {
+  
+  actVars <- paste0(act,"_",measurements)
+  
+  for (event in events) {
+    
+    print(event)
+    #mean age
+    print(mean(actData[actData$eventname==event,'ageYrs']/12,na.rm=T))
+    adata <- actData[actData$eventname==event, actVars]
+    any <- adata[[paste0(act,'_endorsed')]] == TRUE
+    adata <- adata[any,]
+    n=sum(adata[[paste0(act,'_endorsed')]],na.rm=TRUE)
+    print(n)
+    
+    par(mfrow = c(2, 2))
+    par(cex = 0.6)
+    par(mar = c(3, 3, 1, 1), oma = c(1, 1, 1, 1))
+    hist(adata[[paste0(act,'_ageStarted')]], main=paste0(act,' ageStarted'),freq=FALSE)
+    hist(adata[[paste0(act,"_hrperwk")]], main=paste0(act,' Hrs/wk'),xlim=c(0, 8),freq=FALSE,breaks=seq(0,24*7,0.5))
+    hist(adata[[paste0(act,"_hrperyr")]], main=paste0(act,' Hrs/yr'),freq=FALSE,breaks=seq(0,5000,50),xlim=c(0, 500))
+    hist(adata[[paste0(act,'_hrlifetime')]], main=paste0(act,' hr lifetime'),breaks = 50,freq=FALSE, xlim=c(0, 1500))
+    
+    print(summary(adata[[paste0(act,"_hrperwk")]]))
+    print(100*sum(adata[[paste0(act,"_hrperwk")]] > hrlim, na.rm = T)/n)
+    
+    print(summary(adata[[paste0(act,"_hrlifetime")]]))
+
+    
+    #get percentage participating in each context
+    n=sum(adata[[paste0(act,'_any')]],na.rm=TRUE)
+    percContext = apply(adata[,1:4],2,sum,na.rm=TRUE) / n
+    barplot(percContext,names.arg=c("school","outside","private","self"),main="Contexts")
+    
+    #correlation of contexts
+    mat = data.matrix(adata[,1:4])
+    mat[is.na(mat)]=0
+    cc = cor(mat)
+    corrplot(cc,diag=FALSE)
+  }
+}
+  
+```
+
+# Trends in music engagement (hrperwk) across time
+```{r trends-across-timepoint, fig.width=10, fig.height=6}
+#define activity and outcome measure
+act <- 'music'
+measure <- 'hrperwk'
+measVar <- paste0(act,"_",measure)
+actVars <- paste0(act,"_",measurements)
+
+adata <- actData[, c('src_subject_id','eventname','ageYrs',actVars)]
+
+#rename events
+adata[adata$eventname=='baseline_year_1_arm_1','tpname'] = 'BL (10)'
+adata[adata$eventname=='1_year_follow_up_y_arm_1','tpname'] = 'Y1 (11)'
+adata[adata$eventname=='2_year_follow_up_y_arm_1','tpname'] = 'Y2 (12)'
+adata[adata$eventname=='3_year_follow_up_y_arm_1','tpname'] = 'Y3 (13)'
+adata[adata$eventname=='4_year_follow_up_y_arm_1','tpname'] = 'Y4 (14)'
+
+adata[!is.na(adata[[measVar]]) & adata[[measVar]]==0, measVar]=NA #convert 0 hours per weeek to 0s
+
+summary(adata)
+
+#ggplot(adata,aes(x=tpname, y=music_hrperwk)) + geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)
+
+ggplot(adata,aes(x=.data$tpname, y=.data[[measVar]])) + 
+  geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim) +
+  theme(text = element_text(size = 16)) 
+#scale_fill_viridis(discrete=TRUE) +
+#scale_color_viridis(discrete=TRUE) 
+
+ggplot(adata,aes(x=tpname,y=music_hrperwk))+geom_boxplot() + ylim(0,hrlim)
+
+
+ggplot(adata,aes(x=music_hrperwk, fill=tpname)) +
+  geom_histogram(data = subset(adata, eventname == 'baseline_year_1_arm_1'), position='identity',alpha=0.3,bins=10, aes(y=(..count..)/sum(..count..))) +
+  
+  geom_histogram(data = subset(adata, eventname == '1_year_follow_up_y_arm_1'), position='identity',alpha=0.3,bins=10, aes(y=(..count..)/sum(..count..))) +
+  
+  geom_histogram(data = subset(adata, eventname == '2_year_follow_up_y_arm_1'), position='identity',alpha=0.3,bins=10, aes(y=(..count..)/sum(..count..))) + 
+  
+  geom_histogram(data = subset(adata, eventname == '3_year_follow_up_y_arm_1'), position='identity',alpha=0.3,bins=10, aes(y=(..count..)/sum(..count..))) +
+  
+  geom_histogram(data = subset(adata, eventname == '4_year_follow_up_y_arm_1'), position='identity',alpha=0.3,bins=10, aes(y=(..count..)/sum(..count..))) +
+  
+  xlim(0,hrlim)
+  
+```
+
+# spaghetti plots
+
+``` {r spaghetti-plots, fig.width=10, fig.height=8}
+
+activities_full <- unlist(strapplyc(names(actData),"(.*)_school$"))
+measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12", "any", "ageStarted", "hrperwk","hrperyr", "hrlifetime","endorsed")
+
+#define activity and outcome measure
+act <- 'music'
+measure <- 'hrlifetime'
+measVar <- paste0(act,"_",measure)
+endorsedVar <- paste0(act,"_","endorsed")
+actVars <- paste0(act,"_",measurements)
+
+adata <- actData[, c('src_subject_id','eventname','ageYrs', measVar, endorsedVar)]
+
+# rename events
+adata[adata$eventname=='baseline_year_1_arm_1','tpname'] = 'BL'
+adata[adata$eventname=='1_year_follow_up_y_arm_1','tpname'] = 'Y1'
+adata[adata$eventname=='2_year_follow_up_y_arm_1','tpname'] = 'Y2'
+adata[adata$eventname=='3_year_follow_up_y_arm_1','tpname'] = 'Y3'
+adata[adata$eventname=='4_year_follow_up_y_arm_1','tpname'] = 'Y4'
+
+events = c('BL','Y1','Y2','Y3','Y4')
+
+# widen the data for our measure to use in subject selection
+adataw <- adata %>% select(-eventname) %>% pivot_wider(names_from = tpname, names_sep='.', values_from = all_of(c("ageYrs", measVar, endorsedVar)))
+
+nTPendorsed <- apply(adataw[,paste0(endorsedVar,'.',events)], 1, sum,na.rm=TRUE)
+#nTPendorsed[nTPendorsed==0] = NA
+musicSubj = adataw[nTPendorsed>0,'src_subject_id'][[1]] #[1:10]
+
+adata <- adata[adata$src_subject_id %in% musicSubj,]
+
+
+
+#function to create a spaghetti plot of change in variable y across timepoints
+tpPlot <- function(x,y,title) {
+  adata %>%
+    group_by(src_subject_id) %>%
+    ggplot(aes(x=get(x),y=get(y),group=src_subject_id)) +
+    geom_line(alpha=.02, lwd=.5) + 
+    geom_point(aes(x=get(x), y=get(y)), size=0.1, alpha=0.02) +
+    #stat_smooth(aes(group=1),method="loess") + 
+    labs(title=title, y=y, x=x) +
+    theme(plot.title=element_text(face="bold", size=15)) +
+    scale_y_log10()
+    #geom_jitter(width=0.2)
+}
+
+x="tpname"
+y=measVar
+title=paste0("Change in ", y, " across ", x)
+tpPlot(x,y,title)
+
+
+
+
+```
+
+# Trends in engagement (hrperwk) by SES
+
+```{r trends-by-SES}
+
+hrlim=1.5
+  adata <- actData[, c('src_subject_id','eventname','age','sex',paste0('PC',1:10),'household.income','high.educ','abcd_site','rel_family_id',actVars)]
+  #rename events
+  adata[adata$eventname=='baseline_year_1_arm_1','tpname'] = 'BL (10)'
+  adata[adata$eventname=='1_year_follow_up_y_arm_1','tpname'] = 'Y1 (11)'
+  adata[adata$eventname=='2_year_follow_up_y_arm_1','tpname'] = 'Y2 (12)'
+
+  adata[!is.na(adata$music_hrperwk) & adata$music_hrperwk==0, 'music_hrperwk']=NA
+  
+  ggplot(adata,aes(x=household.income,y=music_hrperwk))+geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)+
+     theme(text = element_text(size = 20)) 
+    #scale_fill_viridis(discrete=TRUE) +
+    #scale_color_viridis(discrete=TRUE) 
+  
+    ggplot(adata,aes(x=high.educ,y=music_hrperwk))+geom_violin(draw_quantiles = c(0.5))+ylim(0,hrlim)+
+     theme(text = element_text(size = 20)) 
+
+    #ggplot(adata,aes(x=tpname,y=music_hrperwk))+geom_boxplot() 
+
+  
+  #ggplot(adata,aes(x=music_hrperwk, fill=tpname)) + geom_histogram(position='identity',alpha=0.3,bins=50)
+    
+  cov='age+sex+PC1+PC2+PC3+PC4+PC5+PC5+PC7+PC8+PC9+PC10'
+  IV='household.income'
+  IV='high.educ'
+  DV='music_hrperwk'
+  form = paste0(DV,' ~ ',IV,'+',cov)
+  form.r = paste0(DV,' ~ ',cov)
+  random='~(1|abcd_site/rel_family_id)'
+  
+  minc<-gamm4(formula=formula(form),random=formula(random), data=adata)
+  minc.r<-gamm4(formula=formula(form.r),random=formula(random), data=adata)
+
+  summary(minc$gam)
+  summary(minc.r$gam)
+  anova(minc$gam,minc.r$gam)
+  
+  r.squaredLR(minc$mer, minc.r$mer)
+  
+  # high.educ explains 1.9% more variance (an increase of 50%)
+```
+
+
+# Plot participation in activities
+simple distribution of participants endorsing any type of a given activity ever and in past 12 months
+```{r activity-endorsement, warning=TRUE, fig.width=10, fig.height=6 }
+activities <- activities_full[1:29]
+percAct <- 100*sapply(actData[paste0(activities,"_any")],sum,na.rm=TRUE) / nrow(actData)
+names(percAct) <- gsub("_any", "", names(percAct))
+
+percp12 <- 100*sapply(actData[paste0(activities,"_p12")],sum,na.rm=TRUE) / nrow(actData)
+names(percp12) <- gsub("_p12", "", names(percp12))
+
+
+percSport <- 100*sum(actData$sports_any>0,na.rm=TRUE) / nrow(actData)
+percSport_p12 <- 100*sum(actData$sports_p12>0,na.rm=TRUE) / nrow(actData)
+percArts <- 100*sum(actData$arts_any,na.rm=TRUE) / nrow(actData)
+percArts_p12 <- 100*sum(actData$arts_p12,na.rm=TRUE) / nrow(actData)
+#percMusicNoSport <- 100*sum(actData$musicNoSport,na.rm=TRUE) / nrow(actData)
+#percMusicNoSport_p12 <- 100*sum(actData$musicNoSport_p12,na.rm=TRUE) / nrow(actData)
+aggPerc <- as.data.frame(cbind(percArts, percArts_p12, percSport, percSport_p12))
+
+print("=== Activity endorsement: p12")
+sort(percp12,decreasing = TRUE)
+par(mar=c(11,4,4,4));barplot(sort(percp12,decreasing = TRUE), las=2, ylim=range(pretty(c(0, percp12))),ylab='Participation (%)',main='Participation by Activity')
+
+print("=== Activity endorsement: Lifetime")
+sort(percAct,decreasing = TRUE)
+par(mar=c(11,4,4,4));barplot(sort(percAct,decreasing = TRUE), las=2, ylim=range(pretty(c(0, percAct))),ylab='Participation (%)',main='Participation by Activity')
+```
+
+##How many other activies musicians are involved in & does this differ from other activities?
+```{r other-activities-by-activity}
+m <- data.matrix(actData[actData$music_p12==1 & !is.na(actData$music_p12), paste0(activities,"_p12")])
+otherActivities = rowSums(m,na.rm=TRUE) - 1
+par(mar=c(11,4,4,4));hist(otherActivities, breaks=0:20, freq=FALSE)
+
+means=list()
+for (act in activities) {
+  col = paste0(act,"_p12");
+  m <- data.matrix(actData[actData[col]==1 & !is.na(actData[col]), paste0(activities,"_p12")])
+  otherActivities = rowSums(m,na.rm=TRUE) - 1
+  par(mar=c(11,4,4,4));hist(otherActivities, breaks=0:26, freq=FALSE,main=col)
+  means[act] = mean(otherActivities, na.rm=TRUE)
+}
+means = as.numeric(means)
+names(means)=activities
+
+par(mar=c(11,4,4,4));barplot(sort(means,decreasing = TRUE), las=2, ylim=range(pretty(c(0, means))))
+
+```
+
+
+
+##Activity participation by site
+```{r activity-by-site, eval=FALSE, echo=FALSE}
+activities <- activities_full[1:29]
+for (site in levels(actData$abcd_site)) {
+  thisSite = actData$abcd_site==site
+  percp12 <- 100*sapply(actData[thisSite, paste0(activities,"_p12")],sum,na.rm=TRUE) / sum(thisSite)
+  par(mar=c(11,4,4,4));barplot(sort(percp12,decreasing = TRUE),las=2,main=site)
+}
+```
+
+Plot correlation between activities, hierarchically clustered
+# Plot activities correlation
+```{r activities-correlation, fig.width=10, fig.height=10}
+#analyze correlations across different activities
+mat <- data.matrix(actData[paste0(activities_full[1:29],"_p12")])
+#mat <- data.matrix(actData[paste0(activities_full[1:29],"_any")])
+
+# clean up labels
+colnames(mat) <- gsub("_any", "", colnames(mat))
+colnames(mat) <- gsub("_p12", "", colnames(mat))
+colnames(mat) <- gsub("wpolo", "swim", colnames(mat))
+colnames(mat) <- gsub("polo", "horse", colnames(mat))
+
+
+
+mat[is.na(mat)] = 0
+actCor <- cor(mat)
+actCor <- actCor - diag(nrow(actCor))
+df = 11000
+t = actCor / sqrt( (1 - actCor^2) / (11000) )
+p.value = 1 - pt(abs(t),df)
+#emphasize colors (limits don't work properly on corrplot--cl.lim should give fullscale color, but instead only censors)
+actCor <-  actCor * 3
+lim <- 1
+actCor[actCor > lim] = lim
+actCor[actCor < -lim] = -lim
+
+#corrplot(actCor, method="square",order="alphabet",diag=FALSE,cl.lim=c(-lim, lim))
+corrplot(actCor, method="square",order="hclust",diag=FALSE,addrect=11,cl.lim=c(-lim, lim),p.mat = p.value, sig.level=0.05, insig="blank",tl.cex=1.5,col=colorRampPalette(c("blue","white","red"))(200))
+```
+
+Show similarity in a network form
+https://psych-networks.com/r-tutorial-identify-communities-items-networks/
+```{r activities-network, fig.width=10, fig.height=10}
+library(qgraph)
+cc=cor_auto(mat)
+#corrplot(cc, method="square",order="hclust",diag=FALSE,addrect=6,p.mat = p.value, sig.level=0.05, insig="blank",tl.cex=.7)
+
+graph<-qgraph(cc, graph="glasso", layout="spring", sampleSize = nrow(mat),
+              vsize=7, cut=0, maximum=.45, border.width=1.5,threshold=TRUE)
+
+library("igraph")
+g = as.igraph(graph, attributes=TRUE)
+sgc <- spinglass.community(g)
+sgc$membership
+
+#graph1<-qgraph(cc, graph="glasso", layout="spring", sampleSize = nrow(mat),
+#              vsize=7, cut=0, maximum=.45, border.width=1.5,threshold=TRUE,
+#              groups = sgc)
+
+
+```
+
+Do the correlation separately for each site
+```{r activities-correlation-by-site, eval=FALSE, echo=FALSE}
+for (site in levels(actData$abcd_site)) {
+  mat <- data.matrix(actData[actData$abcd_site==site, paste0(activities,"_p12")])
+  mat[is.na(mat)] = 0
+  actCor <- cor(mat)
+  #emphasize colors (limits don't work properly on corrplot--cl.lim should give fullscale color, but instead only censors)
+  actCor <-  actCor * 2
+  actCor[is.na(actCor)] = 0
+  lim <- 1
+  actCor[actCor > lim] = lim
+  actCor[actCor < -lim] = -lim
+  #corrplot(actCor, method="square",order="alphabet",diag=FALSE,cl.lim=c(-lim, lim))
+  corrplot(actCor, method="square",order="hclust",diag=FALSE,addrect=10,cl.lim=c(-lim, lim),tl.cex=0.75)
+}
+```
+
+analyze location of different activities
+```{r activity-by-site-and-gender, eval=FALSE}
+#https://stackoverflow.com/questions/43624391/r-dplyr-methods-inside-own-function
+summary.by <- function(data,var,group) {
+  var <- enquo(var)
+}
+
+#% by region
+regional <- actData %>% group_by(site_id_l) %>% dplyr::mutate(siteN = n(), musicPerc = 100 * sum(music_p12,na.rm=TRUE)/n(), musicN = sum(music_p12,na.rm=TRUE))
+print('=== participation by region ===')
+print(arrange(aggregate(cbind(siteN,musicN, musicPerc) ~ site_id_l, data=regional, FUN=mean), desc(musicPerc)), row.names=FALSE)
+
+#5.0 range from 52% to 19% by site
+
+
+#by gender
+gender <- actData %>% group_by(sex) %>% dplyr::mutate(siteN = n(), musicPerc = 100 * sum(music_p12,na.rm=TRUE)/n(), musicN = sum(music_p12,na.rm=TRUE)) #needed?
+gender_summary <- gender %>% group_by(sex) %>% dplyr::summarise(siteN = n(), musicPerc = 100 * sum(music_p12,na.rm=TRUE)/n(), musicN = sum(music_p12,na.rm=TRUE))
+
+#remove non-binary
+#gender <- filter(gender, sex)
+print('=== participation by gender ===')
+#print(arrange(aggregate(cbind(siteN, musicN, musicPerc) ~ sex, data=gender, FUN=mean), row.names=FALSE)) #another way to aggregate the data
+print(gender_summary)
+
+# participation.summary <- function(activity, data) {
+#   fn <- paste0("sai_p_",activity,"_",c("school","outside","private","self"))
+#
+#   return(any(data[2,fn]))
+# }
+#
+# unlist(lapply(activities, participation.summary(x,data)))
+
+#setnames(mdata,old=c("school","outside"),new=c("Group_school","Group_outside"))
+```
+
+# total hours music, how well predicted by many other variables?
+
+How much extra variance does intensity of different activities predict?
+
+```{r modeling, eval=FALSE, echo=FALSE,warning=FALSE,message=FALSE,error=FALSE, results='hide'}
+
+source('./nc_y_nihtb_5.0.R')
+source("./abcd_y_lt_5.0.R")
+
+keyCols = c('src_subject_id','eventname')
+
+actData = actData0
+actData <- left_join(actData, abcd_y_lt[,c(keyCols, 'rel_family_id')], by=keyCols, relationship="one-to-one")
+actData <- left_join(actData, nc_y_nihtb[,c(keyCols, 'nihtbx_fluidcomp_uncorrected', 'nihtbx_cryst_uncorrected')], by=keyCols, relationship="one-to-one")
+
+
+source('/Users/jri/Documents/ Research/Projects/simphony/ABCD/Code/cmig_library/univariate_models.r')
+
+#phenoVars <- names(actData)[grepl('nihtbx',names(actData))]
+#neurocogVarPc <- names(actData)[grepl('neurocog',names(actData))]
+#rsVars <- names(actData)[grepl('rsfmri',names(actData))]
+#demoVars <- c("src_subject_id","eventname","site_id_l","rel_family_id","rel_group_id","age", "sex","household.income","high.educ","anthro_bmi_calc","race_ethnicity",'EUR', 'AFR', 'EAS', 'AMR',"accult_phenx_q1_p","accult_phenx_q1")
+
+# Define Models
+pc_cols = paste0('PC', seq(10))
+covariates = c('age', 'sex',  pc_cols, 'household.income','high.educ')
+
+covariates = c('ageYrs')
+random_effects='~(1|site_id_l/rel_family_id)'
+IVs <- c("arts_hrlifetime","arts_hrperwk","sports_hrlifetime","sports_hrperwk","music_hrlifetime","music_hrperwk","soc_hrlifetime","soc_hrperwk","dance_hrlifetime","dance_hrperwk")
+IVs <- c("arts_hrlifetime","sports_hrlifetime","music_hrlifetime","soc_hrlifetime")
+DVs <- c('nihtbx_fluidcomp_uncorrected', 'nihtbx_cryst_uncorrected') #,'EducAttain','IQ') 
+#DVs <- names(actData)[grepl("nihtbx",names(actData))]
+#DVs <- names(actData)[grepl("rsfmri",names(actData))]
+#DVs <- names(actData)[grepl("neurocog",names(actData))]
+#DVs <- c('EducAttain') #,'ASD','ADHD')
+
+#DVs <- c("arts_hrlifetime","sports_hrlifetime")
+#IVs <- c("nihtbx_cryst_uncorrected")
+
+#swap DV/IV
+#print('* Swapping DV & IV')
+#tmp = DVs
+#DVs = IVs
+#IVs = tmp
+
+# TODO move this into run_model, for each IV
+ad = actData[,c(IVs,DVs,covariates,"site_id_l","rel_family_id")]
+# add more vars to gamma distribution list if plan to use as DV, or use quantnorm version as DV
+
+model_table = create_model_table(DVs, IVs, covariates, random_effects, reduced_models=TRUE)
+
+model_table_gamm = run_models(model_table, ad, model_type='GAMM4', cores=1,QN_IVs=FALSE,QN_gauss_DVs=FALSE)
+
+#model_table_glm = run_models(model_table, ad, model_type='glm', cores=1)
+
+# result = cbind(model_table_gamm$DV, model_table_gamm$DV, model_table_gamm$pval, model_table_gamm$r2_delta, model_table_gamm$r2_full)
+# print(result)
+```
+ 
+# display fit results
+```{r model-results, eval=FALSE, echo=FALSE, , fig.width=10, fig.height=10}
+#data are in long form, indexed by IV and DV, use r2_delta as value
+
+library(ggplot2)
+library(patchwork)
+
+plt1 <- ggplot(model_table_gamm, aes(DV, IV)) +
+  geom_tile(aes(fill = r2_delta*100)) +
+  geom_text(aes(label = round(r2_delta*100, 2))) +
+  theme(axis.text.x = element_text(angle = -45, hjust=0, vjust=1)) +
+  scale_fill_continuous(name = expression(100*Delta~R^2)) 
+
+plt2 <- ggplot(model_table_gamm, aes(DV, IV)) +
+  geom_tile(aes(fill = 100*r2_full)) +
+  geom_text(aes(label = round(100 * r2_full, 1))) +
+  theme(axis.text.x = element_text(angle = -45, hjust=0, vjust=1)) +
+  scale_fill_continuous(name = expression(100 * R^2)) 
+
+plt3 <- ggplot(model_table_gamm, aes(DV, IV)) +
+  geom_tile(aes(fill = 100*r2_delta/r2_full)) +
+  geom_text(aes(label = round(100*r2_delta/r2_full, 1))) +
+  theme(axis.text.x = element_text(angle = -45, hjust=0, vjust=1)) +
+  scale_fill_continuous(name = expression(100*Delta~R^2 / R^2)) 
+
+plt4 <- ggplot(model_table_gamm, aes(DV, IV)) +
+  geom_tile(aes(fill = coeff)) +
+  geom_text(aes(label = round(coeff, 3))) +
+  theme(axis.text.x = element_text(angle = -45, hjust=0, vjust=1)) +
+  scale_fill_distiller(palette = "RdBu", name = expression(beta),limits = c(-max(abs(model_table_gamm$coeff)), max(abs(model_table_gamm$coeff))))
+
+plt5 <- ggplot(model_table_gamm, aes(DV, IV)) +
+  geom_tile(aes(fill = -log10(pval))) +
+  geom_text(aes(label = round(-log10(pval), 1))) +
+  theme(axis.text.x = element_text(angle = -45, hjust=0, vjust=1)) +
+  scale_fill_continuous(name = expression(-log10(p)))  
+
+pl <- align_patches(plt1, plt2, plt3, plt4, plt5)
+pl[[1]]
+pl[[2]]
+pl[[3]] 
+pl[[4]]
+pl[[5]]
+
+
+
+```
+
+``` {asis, echo=FALSE}
+# The Following is ??
+#save for aggregation-------------------------------------------------------
+shortData <- mdata[,c("src_subject_id", "anyArt", "p12")]
+setnames(shortData, old=c("anyArt", "p12"), new=c(theArt, paste0(theArt,"_p12")))
+if (artIdx==1) {
+  allData <- shortData
+} else {
+  allData = full_join(allData, shortData)
+}
+
+# Descriptive analysis-------------------------------------------------------
+
+print(paste("======== ", theArt, " ========"))
+
+#%music overall
+mdata3 <- mdata %>% mutate(percArt = 100 * sum(anyArt,na.rm=TRUE)/n(), percArtP12= 100 * sum(p12,na.rm=TRUE)/n(), artN = sum(anyArt,na.rm=TRUE), siteN = n())
+print('=== participation ===')
+print(paste("N=",mdata3[1,"siteN"], ", artN=", mdata3[1,"artN"] , ", percent=", mdata3[1,"percArt"], ", active=", mdata3[1,"percArtP12"]))
+
+# music in past 12 months (assumes music at some point in life--question only asked if they indiate some music)
+table(mdata[,"p12"],exclude = NULL)
+#   0    1 <NA>?
+# 255 1656 2613
+# implies 1656+255 = 1911 have some music ---42% of total 4524
+
+# relationships between four types of music activity
+table(mdata[,c("Group_school","Group_outside")])
+table(mdata[,c("private","self")])
+
+table(mdata[,c("Group_school","Group_outside","private","self")])
+
+cor(mdata[,c("Group_school","Group_outside","private","self")], use = "complete.obs")
+
+#mean practice amounts
+onlymdata <- subset(mdata,anyArt==TRUE)
+print('=== mean practice amounts ===')
+print(summary(onlymdata[,c("nyr","nmonth","perwk","tspent")]))
+
+#my.f = function(x) c(mean = mean(x,na.rm=TRUE), median = median(x,na.rm=TRUE))
+#onlymdata[, sapply(.SD, my.f), .SDcols = c("nyr","nmonth","perwk","tspent"), by = site_name]
+
+
+#music % by region
+mdata2 <- mdata %>% group_by(abcd_site) %>% mutate(percArt = 100 * sum(anyArt,na.rm=TRUE)/n(), artN = sum(anyArt,na.rm=TRUE), siteN = n())
+print('=== participation by region ===')
+print(arrange(aggregate(cbind(siteN,artN, percArt) ~ abcd_site, data=mdata2, FUN=mean), desc(percArt)), row.names=FALSE)
+
+
+# summary of demographics
+mdata$sex = factor(mdata$sex)
+print(summary(mdata[,c("ageYrs", "sex")]))
+
+#annalyze aggregation
+if (FALSE) {
+  allData$anyArt = allData$music | allData$dance | allData$art | allData$drama | allData$crafts
+  allData$anyArt_p12 = allData$music_p12 | allData$dance_p12 | allData$art_p12 | allData$drama_p12 | allData$crafts_p12
+  allData$nArt = rowSums(allData[,arts], na.rm=TRUE)
+  allData$nArt_p12 = rowSums(allData[,paste0(arts,"_p12")], na.rm=TRUE)s
+  
+
+  print(table(allData[,"nArt"],exclude = NULL))
+  print(table(allData[,"nArt_p12"],exclude = NULL))
+
+  print(paste("N art=",sum(allData$anyArt, na.rm=TRUE), ", N art p12=", sum(allData$anyArt_p12, na.rm=TRUE)))
+
+
+}
+```
