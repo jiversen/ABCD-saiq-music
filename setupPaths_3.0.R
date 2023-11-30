@@ -1,5 +1,5 @@
 # =========================================================================
-# Init machine-dependent files and directories ----------------------------
+# Init machine-dependent files and directories ABCD 3.0 -------------------
 # =========================================================================
 
 #main defines of interest:
