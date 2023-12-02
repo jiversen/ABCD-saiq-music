@@ -1,5 +1,5 @@
-# ABCD 5.0 abcd_y_lt table
-# http://dx.doi.org/10.15154/8873-zj65
+# ABCD 5.1 abcd_y_lt table
+# http://dx.doi.org/10.15154/z563‑zd24
 #
 # basic longitudinal participant information
 #
@@ -10,7 +10,7 @@ library(readr)
 library(reshape2)
 library(patchwork)
 
-source('./setupPaths_5.0.R')
+source('./setupPaths_5.1.R')
 
 # skip school and birth IDs (for now)
 

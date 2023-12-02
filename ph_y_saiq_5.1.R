@@ -1,7 +1,7 @@
-# initial look at ABCD 5.0 ph_y_saiq table
-# http://dx.doi.org/10.15154/8873-zj65
+# initial look at ABCD 5.1 ph_y_saiq table
+# http://dx.doi.org/10.15154/z563‑zd24
 
-# this was adminstered year 3 and 4 and are questions that I added to ABCD
+# this was administered year 3 and 4 and are questions that I added to ABCD!
 #
 
 rm(list=ls())
@@ -10,9 +10,9 @@ library(readr)
 library(reshape2)
 library(patchwork)
 
-source('./setupPaths_5.0.R')
+source('./setupPaths_5.1.R')
 
-ph_y_saiq <- read_csv(file.path(dataDir, "physical-health/ph_y_saiq.csv"))
+ph_y_saiq <- read_csv(file.path(releaseDir, "physical-health/ph_y_saiq.csv"))
 ph_y_saiq <- as.data.frame(lapply(ph_y_saiq, as.factor))
 
 #count occurrences of the different levels of sai_lmusic_hrs_day_y for each event
@@ -55,3 +55,5 @@ combined_plot <- wrap_plots(plots_list, ncol = 2) # Adjust the number of columns
 
 # Print the combined plot
 combined_plot
+
+#ggsave("ph_y_saiq.png", device="png", path=resultDirRoot, units="in", height=11, width=8.5, dpi=400)

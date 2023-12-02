@@ -1,5 +1,5 @@
-# ABCD 5.0 collect variables from various tables
-# http://dx.doi.org/10.15154/8873-zj65
+# ABCD 5.1 collect variables from various tables
+# http://dx.doi.org/10.15154/z563‑zd24
 
 # basic longitudinal participant information
 #
@@ -10,11 +10,11 @@ library(readr)
 library(reshape2)
 library(patchwork)
 
-source('./setupPaths_5.0.R')
+source('./setupPaths_5.1.R')
 keyCols = c("src_subject_id", "eventname")
 
 #Demographics
-fname = file.path(dataDir, "abcd-general/abcd_p_demo.csv")
+fname = file.path(releaseDir, "abcd-general/abcd_p_demo.csv")
 vars = c("demo_prnt_ed_v2", )
 
 

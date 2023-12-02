@@ -1,5 +1,10 @@
-# ABCD 5.0 ph_p_saiq table
-# http://dx.doi.org/10.15154/8873-zj65
+# ABCD 5.1 ph_p_saiq table
+# http://dx.doi.org/10.15154/z563‑zd24
+
+
+# this is a master table-maker as it also includes detailed demographics, PRS, PCS
+# Changelist
+#   12/2  Update to ABCD 5.1, Add PRS and PCS
 
 #
 
@@ -8,7 +13,9 @@
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 rm(list=ls())
-scriptName <- "ph_p_saiq_5.0.R"
+
+tstamp <- format(Sys.time(), "%Y-%m-%d_%H-%M-%S")
+scriptName <- "ph_p_saiq_5.1.R"
 
 # we are only concerned with yearly assessments
 saiqEventnames <- c('baseline_year_1_arm_1','1_year_follow_up_y_arm_1','2_year_follow_up_y_arm_1','3_year_follow_up_y_arm_1','4_year_follow_up_y_arm_1')
@@ -18,6 +25,7 @@ keyCols = c("src_subject_id","eventname")
 doImputeDK = TRUE
 doLog = TRUE
 doDebug = FALSE
+useDeapDemos = TRUE
 
 options(tibble.print_max=100, tibble.print_min=150, tibble.width=400)
 
@@ -46,8 +54,9 @@ library(data.table)
 # Setup Files -------------------------------------------------------------
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-source('./setupPaths_5.0.R')
-outFileBase  <- file.path(resultDir, "abcd_5.0_activities")
+source('./setupPaths_5.1.R')
+resultDir = file.path(resultDirRoot,tstamp)
+outFileBase  <- file.path(resultDir, "abcd_5.1_activities")
 outFileAct   <- paste0(outFileBase, '.Rds')
 outFileInst  <- paste0(outFileBase, '_inst.Rds')
 outFileLong  <- paste0(outFileBase, '_long.Rds')
@@ -55,7 +64,7 @@ outFileMeta  <- paste0(outFileBase, '_meta.RData')
 outFileMusic <- paste0(outFileBase, '_music.csv')
 outFileSubj  <- paste0(outFileBase, '_subj.Rds')
 
-inFile <- file.path(dataDir, "physical-health/ph_p_saiq.csv")
+inFile <- file.path(releaseDir, "physical-health/ph_p_saiq.csv")
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Start Logging -----------------------------------------------------------
@@ -83,30 +92,82 @@ if (!doDebug){
 # Load --------------------------------------------------------------------
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+print_color("Loading Activities data...","bblue")
 D <- read_csv(inFile, guess_max = 25000 ) #auto-detect makes a lot of mistakes for 'rare' data
 # everything except src_subject_id, eventname should be numeric. A few oddballs come through as characters depending on exact value of guess_max, so just be aware
-D <- as.data.frame(lapply(D, as.factor)) #5.0 now seems to use only numeric values for all factors
+D <- as.data.frame(lapply(D, as.factor)) #5.x now seems to use only numeric values for all factors
+# activities have 48728 timepoints
+print_color("Done.\n","blue")
 
-# prepend subject info
-source("./abcd_y_lt_5.0.R")
-subjCols = setdiff(names(abcd_y_lt), keyCols)
+## Add Demographics  ==============================================================
 
-#demographics is a superset of datapoints available in sai, so expand rows of sai to match (will have some empty rows)
-D = full_join(abcd_y_lt, D, by=c("src_subject_id","eventname"), relationship="one-to-one") #unmatched="error",
-#sanity check, should be no rows in D that do not have a match in abcd_y_lt, so cannot have more rows than we started with. (but) D will not have every timepoint in it
-if (nrow(D) != nrow(abcd_y_lt)) stop('Error joining saiq to subject info')
+if (0 & !useDeapDemos) {
+  # prepend subject info (my initial way)
+  source("./abcd_y_lt_5.1.R") #this has 49151 yearly timepoints
 
-#== remove non-year follow-ups, which have no answers for SAIQ
-D <- D %>% filter(!grepl('_month_', eventname)) %>% droplevels()
+  #== remove non-year follow-ups, which have no answers for SAIQ
+  abcd_y_lt <- abcd_y_lt %>% filter(!grepl('_month_', eventname)) %>% droplevels()
+
+  subjCols = setdiff(names(abcd_y_lt), keyCols)
+
+  #demographics is a superset of datapoints available in sai, so expand rows of sai to match (will have some empty rows)
+  D = full_join(abcd_y_lt, D, by=c("src_subject_id","eventname"), relationship="one-to-one") #unmatched="error",
+  #sanity check, should be no rows in D that do not have a match in abcd_y_lt, so cannot have more rows than we started with. (but) D will not have every timepoint in it
+  if (nrow(D) != nrow(abcd_y_lt)) stop('Error joining saiq to subject info')
+
+
+} else {
+  print_color("Prepending DEAP Demographics...\n","blue")
+  # do a more complete job with full demographics
+  source(file.path(toolsDir, "cmig_tools_utils/r/makeDEAPdemos.R"))
+  source(file.path(toolsDir, "cmig_tools_utils/r/makeDesign.R"))
+  datapath <- file.path(releaseDir, "abcd-general/")
+  deapdemos <- makeDEAPdemos(datapath) #this has 48807 yearly timepoints
+  #== add age in years
+  deapdemos = add_column(deapdemos, ageYrs = deapdemos$interview_age / 12, .after="interview_age")
+
+  # add genetic ancestry PCs
+  print_color(sprintf("Adding genetic ancestry PC1-10 from %s...\n", pcsFile), "bblue")
+  pcs = read.table(pcsFile, header=TRUE)
+  colnames(pcs)[colnames(pcs)=='IID'] = 'src_subject_id'
+  pcs <- pcs[,c('src_subject_id', paste0("PC",1:10))] #take first 10 PCs
+  deapdemos = join(deapdemos, pcs, by='src_subject_id')
+
+  # add PRS
+  print_color(sprintf("Adding PRS from %s...\n", prsFile), "bblue")
+  prs = read.table(prsFile, header=TRUE)
+  prs <- prs %>% rename_with(~ paste0("prs_", .x))
+  colnames(prs)[colnames(prs)=='prs_ID'] = 'src_subject_id'
+
+  deapdemos = join(deapdemos, prs, by='src_subject_id')
+
+  D = full_join(deapdemos, D, by=c("src_subject_id","eventname"), relationship="one-to-one") #unmatched="error",
+  # Join has 48808 rows--must be one in activities that is not found in demos!
+  # these rows have no interview_age 11091 11092 11093 11094 48808
+}
 
 #== there is one bad subject, 'NDAR_INV749XW1TD', that does not have interview_date and interview_age, remove for now after confirming the problem
 if (any(is.na(D[D$src_subject_id=='NDAR_INV749XW1TD', 'interview_age'][[1]]))) {
+  print_color(sprintf("NDAR_INV749XW1TD has no interview_age or demographics: removing\n"),'red')
   D = D[D$src_subject_id!='NDAR_INV749XW1TD',]
 }
+#== also NDAR_INVMZG6CUGJ 4_year_follow_up_y_arm_1
+missingAge = which(is.na(D$interview_age))
+print_color(sprintf("Removing additional timepoints with no interview_age or demographics: %s\n",paste0(D[missingAge,"src_subject_id"],", ",D[missingAge,"eventname"])),'red')
+D = D[-missingAge,]
+
 # double check we haven't missed any others
 if (any(is.na(D[, 'interview_age'][[1]]))) {
-  error("Some subjects are missing an age")
+  error("Some additional subjects are missing an age")
 }
+
+# fill in missing demographic variables
+demoVars = setdiff(names(deapdemos), keyCols)
+D <- D %>% group_by(src_subject_id) %>%
+  fill(all_of(demoVars), .direction = "downup")
+
+
+
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ## Some basic descriptions of the data and what we'll do with it  ---------
@@ -269,14 +330,12 @@ for (i in 1:length(saiqEventnames)) {
 }
 names(tpidx) <- saiqEventnames
 
-# ----++++++++++++----
-
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Build Activities Table --------------------------------------------------
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-#start master table with keys and subject info
-Dsa = select(D, all_of(c(keyCols, subjCols)))
+#start master table with keys and subject demographic info
+Dsa = select(D, all_of(c(keyCols, demoVars)))
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ## Main loop through activities to build activities table -----------------
@@ -630,9 +689,9 @@ for ( code in activityCodeToProcess ) {
     as <- subjTable[[asCol]]
     if (all(is.na(as))) break
     firstTrue = which(endorsed)[1]
-    if (!is.na(firstTrue)) {
-      as[-firstTrue] <- NA #could set all to as[firstTrue] but better to have just one value per subject
-    } else {
+    if (!is.na(firstTrue)) { #we found an endorsement
+      as[-firstTrue] <- as[firstTrue] #could set all to NA so as to have just one value per subject
+    } else {                 #no endorsement
       as[!is.na(as)] <- NA
     }
     Dsa[subjIdx, asCol] <- as
@@ -646,9 +705,11 @@ for ( code in activityCodeToProcess ) {
 
 print("== Adding aggregate sports & arts ==")
 
+# all sports
 sports <- c("base","basket","climb","fhock","fball","gym","ihock","polo","iskate","m_arts","lax","rugby","skate","sboard","soc","surf","wpolo","tennis","run","mma","vball","yoga")
 Dsa$sports_any      <- apply(Dsa[,paste0(prefix,sports,"_any")], 1, any,na.rm=TRUE) #Note: apply is necessary here to force row-wise calculations
 Dsa$sports_p12      <- apply(Dsa[,paste0(prefix,sports,"_p12")], 1, any,na.rm=TRUE)
+Dsa$sports_endorsed <- apply(Dsa[,paste0(prefix,sports,"_endorsed")], 1, any,na.rm=TRUE)
 Dsa$sports_school   <- apply(Dsa[,paste0(prefix,sports,"_school")], 1, sum,na.rm=TRUE)
 Dsa$sports_outside  <- apply(Dsa[,paste0(prefix,sports,"_outside")], 1, sum,na.rm=TRUE)
 Dsa$sports_private  <- apply(Dsa[,paste0(prefix,sports,"_private")], 1, sum,na.rm=TRUE)
@@ -658,11 +719,15 @@ Dsa$sports_nmonth   <- apply(Dsa[,paste0(prefix,sports,"_nmonth")], 1, mean,na.r
 Dsa$sports_perwk    <- apply(Dsa[,paste0(prefix,sports,"_perwk")], 1, mean,na.rm=TRUE)
 Dsa$sports_tspent   <- apply(Dsa[,paste0(prefix,sports,"_tspent")], 1, mean,na.rm=TRUE)
 Dsa$sports_hrperwk  <- apply(Dsa[,paste0(prefix,sports,"_hrperwk")], 1, sum,na.rm=TRUE)
+Dsa$sports_hrperyr  <- apply(Dsa[,paste0(prefix,sports,"_hrperyr")], 1, sum,na.rm=TRUE)
 Dsa$sports_hrlifetime <- apply(Dsa[,paste0(prefix,sports,"_hrlifetime")], 1, sum,na.rm=TRUE)
+Dsa$sports_ageStarted <- apply(Dsa[,paste0(prefix,sports,"_ageStarted")], 1, min,na.rm=TRUE)
 
+# all arts
 arts <- c("dance","music", "art", "drama", "crafts")
 Dsa$arts_any        <- apply(Dsa[,paste0(prefix,arts,"_any")], 1, any,na.rm=TRUE)
 Dsa$arts_p12        <- apply(Dsa[,paste0(prefix,arts,"_p12")], 1, any,na.rm=TRUE)
+Dsa$arts_endorsed   <- apply(Dsa[,paste0(prefix,arts,"_endorsed")], 1, any,na.rm=TRUE)
 Dsa$arts_school     <- apply(Dsa[,paste0(prefix,arts,"_school")], 1, sum,na.rm=TRUE)
 Dsa$arts_outside    <- apply(Dsa[,paste0(prefix,arts,"_outside")], 1, sum,na.rm=TRUE)
 Dsa$arts_private    <- apply(Dsa[,paste0(prefix,arts,"_private")], 1, sum,na.rm=TRUE)
@@ -672,12 +737,32 @@ Dsa$arts_nmonth     <- apply(Dsa[,paste0(prefix,arts,"_nmonth")], 1, mean,na.rm=
 Dsa$arts_perwk      <- apply(Dsa[,paste0(prefix,arts,"_perwk")], 1, mean,na.rm=TRUE)
 Dsa$arts_tspent     <- apply(Dsa[,paste0(prefix,arts,"_tspent")], 1, mean,na.rm=TRUE)
 Dsa$arts_hrperwk    <- apply(Dsa[,paste0(prefix,arts,"_hrperwk")], 1, sum,na.rm=TRUE)
+Dsa$arts_hrperyr    <- apply(Dsa[,paste0(prefix,arts,"_hrperyr")], 1, sum,na.rm=TRUE)
 Dsa$arts_hrlifetime <- apply(Dsa[,paste0(prefix,arts,"_hrlifetime")], 1, sum,na.rm=TRUE)
+Dsa$arts_ageStarted <- apply(Dsa[,paste0(prefix,arts,"_ageStarted")], 1, min,na.rm=TRUE)
+
+# arts withut music; FIXME: however, this may still include people doing music
+artsnm <- c("dance", "art", "drama", "crafts")
+Dsa$artsnm_any        <- apply(Dsa[,paste0(prefix,artsnm,"_any")], 1, any,na.rm=TRUE)
+Dsa$artsnm_p12        <- apply(Dsa[,paste0(prefix,artsnm,"_p12")], 1, any,na.rm=TRUE)
+Dsa$artsnm_endorsed   <- apply(Dsa[,paste0(prefix,artsnm,"_endorsed")], 1, any,na.rm=TRUE)
+Dsa$artsnm_school     <- apply(Dsa[,paste0(prefix,artsnm,"_school")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_outside    <- apply(Dsa[,paste0(prefix,artsnm,"_outside")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_private    <- apply(Dsa[,paste0(prefix,artsnm,"_private")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_self       <- apply(Dsa[,paste0(prefix,artsnm,"_self")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_nyr        <- apply(Dsa[,paste0(prefix,artsnm,"_nyr")], 1, mean,na.rm=TRUE)
+Dsa$artsnm_nmonth     <- apply(Dsa[,paste0(prefix,artsnm,"_nmonth")], 1, mean,na.rm=TRUE)
+Dsa$artsnm_perwk      <- apply(Dsa[,paste0(prefix,artsnm,"_perwk")], 1, mean,na.rm=TRUE)
+Dsa$artsnm_tspent     <- apply(Dsa[,paste0(prefix,artsnm,"_tspent")], 1, mean,na.rm=TRUE)
+Dsa$artsnm_hrperwk    <- apply(Dsa[,paste0(prefix,artsnm,"_hrperwk")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_hrperyr    <- apply(Dsa[,paste0(prefix,artsnm,"_hrperyr")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_hrlifetime <- apply(Dsa[,paste0(prefix,artsnm,"_hrlifetime")], 1, sum,na.rm=TRUE)
+Dsa$artsnm_ageStarted <- apply(Dsa[,paste0(prefix,artsnm,"_ageStarted")], 1, min,na.rm=TRUE)
+
 
 # indicate those doing music but not sports
-Dsa$musicNoSport_any <- Dsa$sai_p_music_any>0 & !Dsa$sports_any>0
+Dsa$musicNoSport_any <- Dsa$sai_p_music_endorsed & !Dsa$sports_endorsed
 Dsa$musicNoSport_p12 <- Dsa$sai_p_music_p12 & !Dsa$sports_p12
-# TODO: make variable for 'arts besides music'
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Musical Instruments -----------------------------------------------------
@@ -715,7 +800,9 @@ for (code in instrumentCode) {
   comma[len>0] <- ', '
   sports_activity_music_instr_list[endorsed] = paste0(sports_activity_music_instr_list[endorsed], comma, instruments[code])
 }
-Dinst = cbind(Dinst,sports_activity_music_N_instr,sports_activity_music_instr_list)
+
+Dinst$sports_activity_music_N_instr <- sports_activity_music_N_instr
+Dinst$sports_activity_music_instr_list <- sports_activity_music_instr_list
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> >>> >>
 # Save -------------------------------------------------------------------------

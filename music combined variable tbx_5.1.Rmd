@@ -39,31 +39,21 @@ library(reshape2)
 #==  load data  ==
 #=================
 
-ts <- "2023-11-28_18-23-30"
+ts <- "2023-12-02_12-21-34"
 
+source("./setupPaths_5.1.R")
 # I/O
-host = Sys.info()["nodename"]
-if ( pmatch("amusing", host, nomatch=FALSE) ) {
-  dataDir <- "C:/Users/jiversen/Documents/RDS/"
-} else if ( pmatch("taiko", host, nomatch=FALSE) ) {
-  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
-} else if ( pmatch("helmholtz", host, nomatch=FALSE) ) {
-  dataDir <- "/Users/jri/Documents/ Research/Projects/simphony/ABCD/Data/"
-}
 
-resultDir = file.path(dataDir,"results",ts)
+resultDir = file.path(resultDirRoot,ts)
 
-activitiesFile      <- file.path(resultDir,"abcd_5.0_activities.Rds")
+activitiesFile <- file.path(resultDir,"abcd_5.1_activities.Rds")
 
 actData <- readRDS(activitiesFile)
-colnames(actData) <- gsub("sai_p_", "", colnames(actData)) #remove prefix from all var names
 
-source('./nc_y_nihtb_5.0.R')
-source("./abcd_y_lt_5.0.R")
+source('./nc_y_nihtb_5.1.R')
 
 keyCols = c('src_subject_id','eventname')
 
-actData <- left_join(actData, abcd_y_lt[,c(keyCols, 'rel_family_id')], by=keyCols, relationship="one-to-one")
 actData <- left_join(actData, nc_y_nihtb[,c(keyCols, 'nihtbx_fluidcomp_uncorrected', 'nihtbx_cryst_uncorrected')], by=keyCols, relationship="one-to-one")
 
 dat0 = actData
@@ -73,7 +63,7 @@ dat0 = actData
 
 ```{r}
 
-# include only baseline and year 2 (TODO: There is activity data at year 1 as well)
+# include only baseline and year 2 (TODO: There is activity data at year 1 and 3 as well)
 
 saiqEventnames <- c("baseline_year_1_arm_1","2_year_follow_up_y_arm_1")
 
