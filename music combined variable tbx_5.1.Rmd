@@ -26,7 +26,11 @@ cogVar = paste0("nihtbx_", cog,"_uncorrected")
 #cog = "smri_area_cort.fuzzy12_central.lh"
 #cog = "smri_area_cort.fuzzy12_occipital.lh"
 
-#cog = "dmri_dti.vol_fiber.at_tslf.rh"
+#cog = "dmri_dti.vol_fiber.at_tslf.rh" 
+
+doStandardize = F
+doLog = T
+
 ```
 
 Load
@@ -39,7 +43,7 @@ library(reshape2)
 #==  load data  ==
 #=================
 
-ts <- "2023-12-02_12-21-34"
+ts <- "2023-12-02_16-07-06"
 
 source("./setupPaths_5.1.R")
 # I/O
@@ -49,6 +53,8 @@ resultDir = file.path(resultDirRoot,ts)
 activitiesFile <- file.path(resultDir,"abcd_5.1_activities.Rds")
 
 actData <- readRDS(activitiesFile)
+colnames(actData) <- gsub("sai_p_", "", colnames(actData)) #remove prefix from all activities var names
+
 
 source('./nc_y_nihtb_5.1.R')
 
@@ -72,56 +78,37 @@ dat = dat[dat$eventname %in% saiqEventnames,]
 #save copy into "dat_main"
 dat_main = dat
 
-#create selection vectors for each timepoint, use to look up 'previous' timepoint's value for nyr
-tpidx <- list()
-en <- dat[['eventname']]
-for (i in 1:length(saiqEventnames)) {
-  tpidx[i] <- list(grepl(saiqEventnames[i], en))
+#Split by timepoint and rejoin with generic names
+colnames(dat)[colnames(dat)==actVar] <- "mus"
+colnames(dat)[colnames(dat)==cogVar] <- "cog"
+
+#STANDARDIZE
+if (doStandardize) {
+  dat$mus = scale(dat$mus)
+  dat$cog = scale(dat$cog)
 }
-names(tpidx) <- saiqEventnames
 
-#Split into columns by timepoint
-dat_all = reshape()
+datT1 = dat[dat$eventname==saiqEventnames[1],]
+datT2 = dat[dat$eventname==saiqEventnames[2],]
 
-#=================
-#==  analysis  ==
-#=================
+dat_all = inner_join(datT1, datT2, by="src_subject_id", suffix=c("_T1", "_T2"))
 
-
-#========================================================
-# ---- use standardized measures from here out ----
-#========================================================
-# datfu2 = datfu
-# names(datfu2) = gsub("_l", "", names(datfu2))
-# dat2 = rbind(datbl,datfu2)
-# dat2 = process_dat(dat2, contains_l_vars = F)
-# 
-# dat = dat2
-# dat$nihtbx_cryst_uncorrected = scale(dat$nihtbx_cryst_uncorrected)
-# dat$sports_activity_ss_music_nmonth_p = scale(dat$sports_activity_ss_music_nmonth_p)
-# 
-# datbl = dat[dat$eventname == "baseline_year_1_arm_1",]
-# datfu = dat[dat$eventname == "2_year_follow_up_y_arm_1",]
-# names(datfu)[3:6] = paste0(names(datfu)[3:6], "_l")
-# datbl$eventname = NULL
-# datfu$eventname = NULL
-# 
-# dat = merge(datbl,datfu, by = "src_subject_id", all = T)
-
-
-dat$mus_T1 = dat[[actVar]]
-dat$mus_T2 = dat[[paste0(actVar,"_l")]]
-
-dat_all = dat #store with all participants
 
 ```
 Look at patterns of music engagement:
 ```{r}
+
+#starts and stops (stop means if hrlifetime has not increased from one timepoint to the next_
+# TODO: extend to all timepoints
+
+#does not work on standardized, clearly.
+if (!doStandardize) {
+
 dat = dat_all
 N = nrow(dat)
 
-# music @ baseline N=4471
-nT1 = sum(dat$mus_T1>0)
+# music @ baseline N=4471 (4416 with new joining method)
+nT1 = sum(dat$mus_T1>0, na.rm=T)
 
 # music both timepoints
 iT1T2 = dat$mus_T1>0 & dat$mus_T2>0
@@ -154,6 +141,8 @@ rect(0,0,2,N,col="transparent",border="black")
 text(2.1,(nT1-nStopT2)/2,format(pAll*100,digits=3))
 text(2.1,(nT1-nStopT2/2),format(pT1Only*100,digits=3))
 text(2.1,(nT1+nStartT2/2),format(pT2Only*100,digits=3))
+
+}
 
 
 ```
@@ -250,7 +239,7 @@ dat = dat[dmus==0 & !is.na(dmus),]
 ```{r}
 # log transform? 
 logStr = "";
-LOG = T
+LOG = doLog & !doStandardize
 
 if (LOG){
   
@@ -264,9 +253,6 @@ if (LOG){
   logStr = "Log "
 
 }
-
-dat$cog_T1 = dat[[cogVar]]
-dat$cog_T2 = dat[[paste0(cogVar,"_l")]]
 
 ```
 
@@ -320,11 +306,11 @@ library(lavaanPlot)
 
 labels=list(mus_T1 = paste0(act,"_T1"), mus_T2 = paste0(act,"_T2"), dmus1 = paste0("d",act),cog_T1 = paste0(cog,"_T1"), cog_T2 = paste0(cog,"_T2"), dcog1 = paste0("d",cog))
 
-lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),labels=labels)
-lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),stand=T,labels=labels)
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),labels=labels, stars="regress")
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=F,edge_options=list(color="grey"),stand=T,labels=labels, stars="regress") #standardized
 
 
-lavaanPlot(name=cog,fitBLCS,coefs=T,covs=T,stars="covs",edge_options=list(color="grey"),stand=F,labels=labels)
+lavaanPlot(name=cog,fitBLCS,coefs=T,covs=T,stars="covs",edge_options=list(color="grey"),stand=F,labels=labels) #show covariances
 
 lavaanPlot(name=cog,fitBLCS,coefs=T,covs=T,stars="covs",edge_options=list(color="grey"),stand=T,labels=labels)
 
