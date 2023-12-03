@@ -17,7 +17,7 @@ abcd_doi <- '10.15154/z563‑zd24'
 
 # set up directories for different hosts
 host = Sys.info()["nodename"]
-if ( pmatch("amusing", host, nomatch=FALSE) ) {
+if ( pmatch("amusing", host, nomatch=FALSE) ) { #obsolete
   scriptDir <- file.path(dataDir,"..","code/R")
   abcdsyncDir <- "C:/Users/jiversen/Documents/Data/abcd-sync"
   dataDir <- "C:/Users/jiversen/Documents/Data"
@@ -30,11 +30,16 @@ if ( pmatch("amusing", host, nomatch=FALSE) ) {
   scriptDir <- file.path(dataDir,"..","code/R")
   resultDirRoot = file.path(dataDir,"results")
 
-} else if ( pmatch("ip", host, nomatch=FALSE) ) {
+} else if ( pmatch("ip", host, nomatch=FALSE) ) { # CMIG
   abcdsyncDir <-cfg$data$abcd_sync
   dataDir <- '/home/jiversen/Data'
-  scriptDir <- "/home/jiversen/R/saiq"
+  releaseDir <- '/space/syn65/1/data/abcd-sync/5.0/tabulated/released/core'
+  scriptDir <- "/home/jiversen/R/ABCD-saiq-music"
+  toolsDir <- '/home/jiversen/matlab/cmig-research-group/cmig_tools_internal'
   resultDirRoot <- file.path("/home/jiversen/Results/saiq")
+
+  pcsFile = '/space/gwas-syn2/1/data/GWAS/ABCD/genotype/plink2.eigenvec'
+
 
 } else if ( pmatch("helmholtz", host, nomatch=FALSE) | pmatch("proteus", host, nomatch=FALSE) ) { # NB * This is the only up to date section for 5.0 (Nov 23)
   abcdsyncDir <-cfg$data$abcd_sync
@@ -43,8 +48,10 @@ if ( pmatch("amusing", host, nomatch=FALSE) ) {
   scriptDir <- file.path("/Users/jri/Documents/ Research/Projects/simphony/ABCD/Code/ABCD-saiq-music")
   toolsDir <- "/Users/jri/Documents/matlab/matlab/projects/simphony/ABCD/cmig-research-group/cmig_tools_internal"
   resultDirRoot = file.path(dataDir,"results")
+
+  #from July 15, 2020--still valid?
+  prsFile <- file.path(dataDir,"merged_prs_scores.tsv")
+  pcsFile <- file.path(dataDir,"plink2.eigenvec")
 }
 
-#from July 15, 2020--still valid?
-prsFile <- file.path(dataDir,"merged_prs_scores.tsv")
-pcsFile <- file.path(dataDir,"plink2.eigenvec")
+
