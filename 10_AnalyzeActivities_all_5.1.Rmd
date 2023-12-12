@@ -262,6 +262,163 @@ tpPlot(x,y,doLog, title)
 
 ```
 
+# starts and stops, napoleon style
+
+```{r napoleon, fig.width=10, fig.height=8}
+
+#starts and stops (stop means if hrlifetime has not increased from one timepoint to the next_
+# TODO: extend to all timepoints
+
+activities_full <- unlist(strapplyc(names(actData),"(.*)_school$"))
+measurements <- c("school",	"outside",	"private",	"self",	"nyr",	"nmonth",	"perwk",	"tspent",	"p12", "any", "ageStarted", "hrperwk","hrperyr", "hrlifetime","endorsed")
+
+#define activity and outcome measure
+act <- 'music'
+measure <- 'hrlifetime'
+measVar <- paste0(act,"_",measure)
+endorsedVar <- paste0(act,"_","endorsed")
+actVars <- paste0(act,"_",measurements)
+
+adata <- actData[, c('src_subject_id','eventname','ageYrs', endorsedVar)]
+
+# rename events
+events = c('baseline_year_1_arm_1','1_year_follow_up_y_arm_1','2_year_follow_up_y_arm_1','3_year_follow_up_y_arm_1','4_year_follow_up_y_arm_1')
+tpnames = c('Y0','Y1','Y2','Y3','Y4')
+index = 0:4
+for (ii in 1:length(events)) {
+  adata[adata$eventname==events[ii],'tpname'] = tpnames[ii] #crazy discovery that if will create list columns in the wide data below if all names_from are NA!!
+  #adata[adata$eventname==events[ii],'tpidx'] = index[ii]
+}
+
+# widen the data for our measure to use in subject selection
+adataw <- adata %>% select(-eventname) %>% pivot_wider(names_from = tpname, names_sep='.', values_from = all_of(c("ageYrs", endorsedVar)))
+
+#sort endorsement columns
+endCols <- paste0(endorsedVar, '.Y', 0:3)
+
+adataw <- adataw[ do.call(order, -adataw[endCols]), ]
+
+#deal with NAs; BL any NA -> FALSE; for other cols, replace NA with the and of the column to the left and right.
+adataw <- adataw %>%
+  mutate(music_endorsed.Y1 = ifelse(is.na(music_endorsed.Y1) & !is.na(music_endorsed.Y0 & music_endorsed.Y2), music_endorsed.Y0 & music_endorsed.Y2, music_endorsed.Y1)) %>%
+  mutate(music_endorsed.Y2 = ifelse(is.na(music_endorsed.Y2) & !is.na(music_endorsed.Y1 & music_endorsed.Y3), music_endorsed.Y1 & music_endorsed.Y3, music_endorsed.Y2)) %>%
+  mutate(music_endorsed.Y3 = ifelse(is.na(music_endorsed.Y3) & !is.na(music_endorsed.Y2 & music_endorsed.Y4), music_endorsed.Y2 & music_endorsed.Y4, music_endorsed.Y3))
+
+#any remaining NA -> FALSE
+adataw[endCols][is.na(adataw[endCols])] <- FALSE
+
+#adataw <- nest(adataw, names=all_of(endCols))
+adataw$pattern <- apply(adataw[endCols], 1, paste, collapse=",")
+adataw$patternl <- apply(adataw['pattern'], 1, function(x) {as.list(as.logical(unlist(strsplit(x, ","))))} )
+adataw$patternl <- apply(adataw['pattern'], 1, function(x) {print(as.list(as.logical(unlist(strsplit(x, ",")))))} )
+
+cadataw$firstmusic <- apply(adataw$pattern, 1, function(x) which(as.logical(unlist(strsplit(names(x, ",")))))[1] ) #this monstrosity picks up the first value of pattern that is true
+
+patterns <- table(adataw$pattern)
+
+#does not work on standardized, clearly.
+Npat = nrow(patterns)
+Nsubj = sum(patterns)
+
+colors = c('darkred','goldenrod2','dodgerblue3','chartreuse3')
+
+y1=0
+plot(c(0,4.2),c(0,Nsubj),type='n',main="music participation",ylab="participant",xlab="event")
+
+for (iR in Npat:1) {
+  pat = as.logical(unlist(strsplit(names(patterns[iR]), ",")))
+  a <- which(pat)
+  if (!length(a)) next
+  b <- rep(NA,length(a))
+  b[a] <- a
+  x <- rbind(b-1, b)
+  y2 <- y1+patterns[iR]
+  p <- patterns[iR] / Nsubj
+  # yy1 <- rep(NA,length(a))
+  # yy2 <- rep(NA,length(a))
+  # yy1[a] <- y1
+  # yy2[a] <- y2
+  
+  c = c(rbind(b-1, b))
+  
+  for (iC in a) {
+    x1 <- x[1,iC]
+    x2 <- x[2,iC]
+    thisColor = colors[a[1]]
+    rect(x1,y1,x2,y2,col=thisColor,lwd=0)
+    
+    text(4.15,y1+(y2-y1)/2,sprintf("%.1f%%", p*100),cex=0.8)
+  }
+  y1=y2
+  
+}
+
+# plot per-timepoint N above at y=8000
+for (iT in 0:3) {
+  col = adataw[[paste0(endorsedVar, '.Y', iT)]]
+  Ntp = sum(col,na.rm=T)
+  text(iT+0.5,8000,sprintf("N=%d (%.1f%%)", Ntp, Ntp/Nsubj*100))
+}
+
+# # music @ baseline N=4471 (4416 with new joining method)
+# nT1 = sum(dat$mus_T1>0, na.rm=T)
+# 
+# # music both timepoints
+# iT1T2 = dat$mus_T1>0 & dat$mus_T2>0
+# nBoth = sum(iT1T2, na.rm=T)
+# nBoth
+# 
+# # start @ T2  N=1316
+# iT2 = dat$mus_T1==0 & dat$mus_T2>0
+# nStartT2 = sum(iT2, na.rm=TRUE)
+# nStartT2
+# 
+# # any music N=5787 (sum of previous 2 check)
+# #sum(dat$mus_T1>0 | dat$mus_T2>0, na.rm=TRUE)
+# 
+# # stop after T1 N=563
+# iT1 = dat$mus_T1>0 & (dat$mus_T2 == dat$mus_T1)
+# nStopT2 = sum(iT1, na.rm=TRUE)
+# nStopT2
+# 
+# pAll = (nT1-nStopT2) / N
+# pT1Only = nStopT2 / N
+# pT2Only = nStartT2 / N
+# 
+# plot(c(0,2.2),c(0,N),type='n',main="music participation",ylab="participant",xlab="event (BL, T2)")
+# rect(0,0,2,nT1-nStopT2,col="darkred", border="transparent")
+# rect(0,nT1-nStopT2,1,nT1,col="goldenrod2",border="transparent")
+# rect(1,nT1,2,nStartT2+nT1,col="dodgerblue3", border="transparent")
+# rect(0,0,2,N,col="transparent",border="black")
+# 
+# text(2.1,(nT1-nStopT2)/2,format(pAll*100,digits=3))
+# text(2.1,(nT1-nStopT2/2),format(pT1Only*100,digits=3))
+# text(2.1,(nT1+nStartT2/2),format(pT2Only*100,digits=3))
+# 
+# }
+
+
+```
+# now, colorize spaghetti plots according to year started
+
+```{r spaghetti-tricolore, fig.width=10, fig.height=8 }
+
+
+
+p <- adata %>%
+    group_by(src_subject_id) %>%
+    ggplot(aes(x=get(x),y=get(y),group=src_subject_id)) +
+    geom_line(alpha=.05, lwd=.5) + 
+    geom_point(aes(x=get(x), y=get(y)), size=0.1, alpha=0.02) +
+    #stat_smooth(aes(group=1),method="loess") + 
+    labs(title=title, y=y, x=x) +
+    theme(plot.title=element_text(face="bold", size=15))
+  #geom_jitter(width=0.2)
+
+  if (doLog) p <- p + scale_y_log10(labels = function(x) format(x, drop0trailing=T, scientific = FALSE))
+
+```
+
 # Trends in engagement (hrperwk) by SES
 
 ```{r trends-by-SES}
@@ -551,6 +708,7 @@ ad = actData[actData$eventname %in% eventnames, c(IVs,DVs,covariates,"abcd_site"
 
 subj = actData[actData$eventname %in% eventnames, "src_subject_id"]
 nSubj = length(unique(subj[[1]]))
+print(sprintf('== N subj = %d ==',nSubj))
 
 # add more vars to gamma distribution list if plan to use as DV, or use quantnorm version as DV
 

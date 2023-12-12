@@ -42,16 +42,17 @@ for (col in names(df)[names(df) != "eventname"]) {
     geom_histogram(data = subset(df, eventname == levels(df$eventname)[1]), aes(y=(..count..)/sum(..count..)),
                    stat="count", alpha = 0.5, position = "identity", bins = 30) +
     geom_histogram(data = subset(df, eventname == levels(df$eventname)[2]), aes(y=(..count..)/sum(..count..)),
-                   stat="count", fill = NA, color = "black", position = "identity", bins = 30, linetype = "solid") +
-    labs(title = col)
+                   stat="count", fill = NA, color = "black", position = "identity", bins = 30, linetype = "solid", size=.2) +
+    labs(title = col) + guides(fill="none") + theme_classic()
     #theme_minimal() +
     #scale_fill_brewer(palette = "Set1") # Adjust color palette as needed
 
   plots_list[[col]] <- p
+  p
 }
 
 # Combine all plots
-combined_plot <- wrap_plots(plots_list, ncol = 2) # Adjust the number of columns as needed
+combined_plot <- wrap_plots(plots_list, ncol = 3) # Adjust the number of columns as needed
 
 # Print the combined plot
 combined_plot
